@@ -1,0 +1,28 @@
+name: ADHD_Compound_Pipeline
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  # Core Python dependencies
+  - python=3.12
+  - pandas
+  - sqlalchemy
+  - psycopg2
+  - streamlit
+  - pyyaml
+  - numpy
+  - matplotlib
+
+  # R dependencies
+  - r-base
+  - r-tidyverse
+
+  # Workflow tools
+  - nextflow
+  - openjdk=11  # Required for Nextflow
+
+  # Additional utilities
+  - pip
+  - pip:
+      - biopython

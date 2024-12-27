@@ -1,0 +1,14 @@
+# Database connection strings
+database:
+  adhd_research: "postgresql://postgres:admin@localhost/adhd_research"
+
+# Pipeline parameters
+pipeline:
+  default_geo_id: "GSE85871"
+  default_samples: "GSM2286316,GSM2286317,GSM2286238,GSM2286239"
+  default_compound: "Gastrodin"
+
+# File paths (if needed)
+paths:
+  logs: "./logs/"
+  results: "./results/"
