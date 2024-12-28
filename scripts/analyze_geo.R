@@ -4,17 +4,22 @@ library(GEOquery)
 library(limma)
 library(Biobase)
 library(ggplot2)
-library(pheatmap)
+library(DBI)
+library(RPostgres)
 
 # Parse command-line arguments
 option_list <- list(
   make_option(c("--geo_id"), type = "character", help = "GEO ID to analyze"),
-  make_option(c("--samples"), type = "character", help = "Samples to include, comma-separated")
+  make_option(c("--samples"), type = "character", help = "Samples to include, comma-separated"),
+  make_option(c("--experiment_id"), type = "character", help = "Experiment ID for database integration")
+  make_option(c("--db_connection_string"), type = "character", help = "Database connection string")
 )
 opt <- parse_args(OptionParser(option_list = option_list))
 
 geo_id <- opt$geo_id
 samples <- unlist(strsplit(opt$samples, ","))
+experiment_id <- opt$experiment_id
+db_connection_string <- opt$db_connection_string
 
 # Step 1: Download the GEO dataset
 gse <- getGEO(geo_id, GSEMatrix = TRUE)
@@ -74,9 +79,29 @@ deg_results$significant <- "Not changed"
 deg_results$significant[deg_results$final_p_value < 0.01 & deg_results$logFC > 1] <- "Up regulated"
 deg_results$significant[deg_results$final_p_value < 0.01 & deg_results$logFC < -1] <- "Down regulated"
 
-# Include additional info about the p-value type used to determine significance
-deg_results$used_for_DEG <- ifelse(deg_results$significant != "Not changed",
-                                   deg_results$p_value_used, NA)
+# Prepare the data for insertion into the database
+degs_to_save <- data.frame(
+  deg_id = seq_len(nrow(deg_results)),                     # Unique identifier
+  gene_name = rownames(deg_results),                      # Gene names
+  log_fold_change = deg_results$logFC,                    # Log fold change
+  p_value = deg_results$final_p_value,                    # Final p-value
+  degs = deg_results$significant,                         # DEG classification
+  experiment_id = experiment_id                           # Experiment ID
+)
+
+con <- dbConnect(RPostgres::Postgres(), db_connection_string)
+
+# Save data to the database
+dbWriteTable(
+  con,
+  name = "degs",       # Table name in the database
+  value = degs_to_save, # Data frame to write
+  row.names = FALSE,   # Do not save row names
+  append = TRUE        # Append to the existing table
+)
+
+# Disconnect from the database
+dbDisconnect(con)
 
 # Save the results with additional information
 write.csv(deg_results, "DEG_results_final.csv", row.names = TRUE)
