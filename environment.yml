@@ -17,6 +17,7 @@ dependencies:
   # R dependencies
   - r-base
   - r-tidyverse
+  - r-argparse
 
   # Workflow tools
   - nextflow

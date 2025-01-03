@@ -1,5 +1,5 @@
 # Load required libraries
-library(optparse)
+library(argparse)
 library(GEOquery)
 library(limma)
 library(Biobase)
@@ -7,19 +7,23 @@ library(ggplot2)
 library(DBI)
 library(RPostgres)
 
-# Parse command-line arguments
-option_list <- list(
-  make_option(c("--geo_id"), type = "character", help = "GEO ID to analyze"),
-  make_option(c("--samples"), type = "character", help = "Samples to include, comma-separated"),
-  make_option(c("--experiment_id"), type = "character", help = "Experiment ID for database integration")
-  make_option(c("--db_connection_string"), type = "character", help = "Database connection string")
-)
-opt <- parse_args(OptionParser(option_list = option_list))
+# Create parser
+parser <- ArgumentParser(description = "Script for GEO data analysis")
 
-geo_id <- opt$geo_id
-samples <- unlist(strsplit(opt$samples, ","))
-experiment_id <- opt$experiment_id
-db_connection_string <- opt$db_connection_string
+# Add arguments
+parser$add_argument("--geo_id", type = "character", required = TRUE, help = "GEO ID of the dataset")
+parser$add_argument("--samples", type = "character", required = TRUE, help = "Comma-separated sample IDs")
+parser$add_argument("--db_connection_string", type = "character", required = TRUE, help = "Database connection string")
+parser$add_argument("--experiment_id", type = "character", required = TRUE, help = "Experiment ID for database integration")
+
+# Parse arguments
+args <- parser$parse_args()
+
+# Access the arguments
+cat("GEO ID:", args$geo_id, "\n")
+cat("Samples:", args$samples, "\n")
+cat("DB Connection String:", args$db_connection_string, "\n")
+cat("Experiment ID:", args$experiment_id, "\n")
 
 # Step 1: Download the GEO dataset
 gse <- getGEO(geo_id, GSEMatrix = TRUE)
