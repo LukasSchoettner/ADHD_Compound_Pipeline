@@ -18,6 +18,8 @@ dependencies:
   - r-base
   - r-tidyverse
   - r-argparse
+  - r-stringdb
+  - r-cytoscapeautomation
 
   # Workflow tools
   - nextflow
@@ -27,3 +29,4 @@ dependencies:
   - pip
   - pip:
       - biopython
+      - py4cytoscape

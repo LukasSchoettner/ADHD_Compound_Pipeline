@@ -7,6 +7,7 @@ library(ggplot2)
 library(DBI)
 library(RPostgres)
 
+getwd()
 # Create parser
 parser <- ArgumentParser(description = "Script for GEO data analysis")
 
@@ -26,7 +27,7 @@ cat("DB Connection String:", args$db_connection_string, "\n")
 cat("Experiment ID:", args$experiment_id, "\n")
 
 # Step 1: Download the GEO dataset
-gse <- getGEO(geo_id, GSEMatrix = TRUE)
+gse <- getGEO(args$geo_id, GSEMatrix = TRUE)
 
 # Step 2: Handle cases where `gse` is a list
 if (length(gse) > 1) {
@@ -35,9 +36,25 @@ if (length(gse) > 1) {
   gse <- gse[[1]]
 }
 
+# Check if experiment_id is a file and read its value
+if (file.exists(args$experiment_id)) {
+  experiment_id <- as.integer(readLines(args$experiment_id))
+  if (is.na(experiment_id)) {
+    stop("Error: experiment_id could not be parsed as an integer.")
+  }
+} else {
+  experiment_id <- as.integer(args$experiment_id)
+  if (is.na(experiment_id)) {
+    stop("Error: experiment_id must be an integer or a valid .txt file.")
+  }
+}
+
 # Extract expression data and phenotype data
 expr_data <- exprs(gse)
 pheno_data <- pData(gse)
+
+# Parse the samples argument into a character vector
+samples <- unlist(strsplit(args$samples, split = ","))
 
 # Subset the data to include only the samples of interest
 expr_data <- expr_data[, samples]
@@ -83,17 +100,28 @@ deg_results$significant <- "Not changed"
 deg_results$significant[deg_results$final_p_value < 0.01 & deg_results$logFC > 1] <- "Up regulated"
 deg_results$significant[deg_results$final_p_value < 0.01 & deg_results$logFC < -1] <- "Down regulated"
 
-# Prepare the data for insertion into the database
+# Keep only up- or down-regulated DEGs for database insertion
+deg_results_filtered <- deg_results[deg_results$significant %in% c("Up regulated", "Down regulated"), ]
+
+# Prepare the filtered data for insertion into the database
 degs_to_save <- data.frame(
-  deg_id = seq_len(nrow(deg_results)),                     # Unique identifier
-  gene_name = rownames(deg_results),                      # Gene names
-  log_fold_change = deg_results$logFC,                    # Log fold change
-  p_value = deg_results$final_p_value,                    # Final p-value
-  degs = deg_results$significant,                         # DEG classification
-  experiment_id = experiment_id                           # Experiment ID
+  gene_name = rownames(deg_results_filtered),              # Gene names
+  log_fold_change = deg_results_filtered$logFC,            # Log fold change
+  p_value = deg_results_filtered$final_p_value,            # Final p-value
+  degs = deg_results_filtered$significant,                 # DEG classification
+  experiment_id = experiment_id                       # Experiment ID
 )
 
-con <- dbConnect(RPostgres::Postgres(), db_connection_string)
+#con <- dbConnect(RPostgres::Postgres(), args$db_connection_string)
+
+con <- dbConnect(
+  RPostgres::Postgres(),
+  host = "/run/postgresql",
+  port = 5432,
+  dbname = "adhd_research",
+  user = "postgres",
+  password = "admin"
+)
 
 # Save data to the database
 dbWriteTable(
@@ -106,6 +134,10 @@ dbWriteTable(
 
 # Disconnect from the database
 dbDisconnect(con)
+
+# Define paths for output files
+deg_results_file <- file.path("results", "DEG_results_final.csv")
+volcano_plot_file <- file.path("results", "volcano_plot_final.png")
 
 # Save the results with additional information
 write.csv(deg_results, "DEG_results_final.csv", row.names = TRUE)
