@@ -2,6 +2,7 @@ import psycopg2
 import pandas as pd
 import gseapy as gp
 import os
+import argparse
 
 def fetch_genes_from_db(table_name, DB_CONNECTION_STRING):
     """
@@ -48,13 +49,13 @@ def get_genes_for_enrichment(DB_CONNECTION_STRING):
     return intersection
 
 
-def perform_pathway_enrichment_from_db(DB_CONNECTION_STRING, output_file, gene_set="KEGG_2021_Human"):
+def perform_pathway_enrichment_from_db(DB_CONNECTION_STRING, experiment_id, gene_set="KEGG_2021_Human"):
     """
     Perform pathway enrichment analysis using genes fetched from the database.
 
-    Parameters:
+    Args:
         DB_CONNECTION_STRING (str): Database connection string.
-        output_file (str): Path to save the enriched pathways results.
+        experiment_id (str): ID of the experiment.
         gene_set (str): Gene set database to use (default: KEGG_2021_Human).
 
     Returns:
@@ -68,22 +69,18 @@ def perform_pathway_enrichment_from_db(DB_CONNECTION_STRING, output_file, gene_s
         print("No intersecting genes found. Pathway enrichment skipped.")
         return pd.DataFrame()
 
-    # Convert to a list of gene symbols
-    gene_list = intersecting_genes['gene'].tolist()
+    gene_list = intersecting_genes['gene_name'].tolist()
 
-    # Perform pathway enrichment analysis
     try:
         enrichment_results = gp.enrichr(
             gene_list=gene_list,
             gene_sets=[gene_set],
             organism="Human",
-            outdir=os.path.dirname(output_file),  # Save results in the output directory
+            outdir=None,
         )
 
-        # Extract and save results
         enriched_df = enrichment_results.results
-        enriched_df.to_csv(output_file, index=False)
-        print(f"Enrichment analysis completed. Results saved to {output_file}")
+        save_pathway_enrichment_to_db(enriched_df, experiment_id, DB_CONNECTION_STRING)
         return enriched_df
 
     except Exception as e:
@@ -91,19 +88,68 @@ def perform_pathway_enrichment_from_db(DB_CONNECTION_STRING, output_file, gene_s
         return pd.DataFrame()
 
 
+def save_pathway_enrichment_to_db(enriched_df, experiment_id, DB_CONNECTION_STRING):
+    """
+    Save pathway enrichment results to the database.
+
+    Args:
+        enriched_df (pd.DataFrame): DataFrame containing pathway enrichment results.
+        experiment_id (str): ID of the experiment.
+        DB_CONNECTION_STRING (str): Database connection string.
+    """
+    try:
+        conn = psycopg2.connect(DB_CONNECTION_STRING)
+        cursor = conn.cursor()
+
+        for _, row in enriched_df.iterrows():
+            cursor.execute(
+                """
+                INSERT INTO pathway_enrichment (experiment_id, p_value, enrichment_id, pathway_name)
+                VALUES (%s, %s, DEFAULT, %s)
+                """,
+                (experiment_id, row['Adjusted P-value'], row['Term']),
+            )
+
+        conn.commit()
+        conn.close()
+        print("Pathway enrichment results saved to the database.")
+    except Exception as e:
+        print(f"Error saving pathway enrichment results: {e}")
+
+def get_experiment_id(experiment_id):
+    """
+    Parse experiment_id from file if it is a file path.
+
+    Args:
+        experiment_id (str): Either the experiment ID as a string or a file path.
+
+    Returns:
+        int: Parsed experiment ID.
+    """
+    if os.path.isfile(experiment_id):
+        with open(experiment_id, "r") as f:
+            return int(f.read().strip())
+    return int(experiment_id)
+
+
+
+import argparse
+import os
+
+# Add the helper function here
+
 if __name__ == "__main__":
-    # Database connection string
-    DB_CONNECTION_STRING = "postgresql://postgres:admin@localhost/adhd_research"
+    parser = argparse.ArgumentParser(description="Perform pathway enrichment analysis")
+    parser.add_argument("--experiment_id", type=str, required=True, help="Experiment ID or file containing the ID")
+    parser.add_argument("--db_connection_string", type=str, required=True, help="Database connection string")
 
-    # Path to save results
-    output_file = "../results/enriched_pathways.csv"
+    args = parser.parse_args()
 
-    # Ensure output directory exists
-    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    # Get the actual experiment ID
+    experiment_id = get_experiment_id(args.experiment_id)
+    DB_CONNECTION_STRING = args.db_connection_string
 
-    # Perform pathway enrichment
-    enriched_pathways = perform_pathway_enrichment_from_db(DB_CONNECTION_STRING, output_file)
-
-    # Print top results for quick inspection
+    enriched_pathways = perform_pathway_enrichment_from_db(DB_CONNECTION_STRING, experiment_id)
     if not enriched_pathways.empty:
-        print(enriched_pathways.head())
+        print("Pathway enrichment completed and saved to the database.")
+

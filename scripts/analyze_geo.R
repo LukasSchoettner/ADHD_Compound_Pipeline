@@ -136,11 +136,11 @@ dbWriteTable(
 dbDisconnect(con)
 
 # Define paths for output files
-deg_results_file <- file.path("results", "DEG_results_final.csv")
+#deg_results_file <- file.path("results", "DEG_results_final.csv")
 volcano_plot_file <- file.path("results", "volcano_plot_final.png")
 
 # Save the results with additional information
-write.csv(deg_results, "DEG_results_final.csv", row.names = TRUE)
+#write.csv(deg_results, "DEG_results_final.csv", row.names = TRUE)
 
 # Plot a volcano plot with the final p-values
 volcano_plot <- ggplot(deg_results, aes(x = logFC, y = -log10(final_p_value), color = significant)) +

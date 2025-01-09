@@ -1,11 +1,20 @@
 nextflow.enable.dsl = 2
-
+//stop hereeeeeeeeee
 workflow {
+    // Create an experiment and capture its ID
     create_experiment(params.geo_id, params.compound, params.description)
 
-    def scripts_channel = Channel.fromPath("scripts")
-    def experiment_id = Channel.fromPath("results/experiment_id.txt")
-    analyze_geo(params.geo_id, params.samples, experiment_id)
+    // Channel to pass the experiment ID
+    def experiment_id_channel = Channel.fromPath("results/experiment_id.txt")
+
+    // Run analyze_geo and wait for its completion
+    def geo_analysis_done = analyze_geo(params.geo_id, params.samples, experiment_id_channel)
+
+    // Run build_ppi_network only after analyze_geo completes
+    def ppi_done = build_ppi_network(experiment_id_channel, geo_analysis_done)
+
+    // Run perform_pathway_enrichment only after build_ppi_network completes
+    perform_pathway_enrichment(params.db_connection_string, experiment_id_channel, ppi_done)
 }
 
 
@@ -37,13 +46,50 @@ process create_experiment {
 
 process analyze_geo {
     publishDir 'results'
+
     input:
     val geo_id
     val samples
     val experiment_id
 
+    output:
+    path "analyze_geo_done.txt"
+
     script:
     """
     Rscript /home/scmbag/Desktop/ADHD_Compound_Pipeline/scripts/analyze_geo.R --geo_id $geo_id --samples "$samples" --experiment_id $experiment_id --db_connection_string "${params.db_connection_string}"
+    echo "Analyze GEO completed." > analyze_geo_done.txt
     """
 }
+
+process build_ppi_network {
+    publishDir 'results'
+
+    input:
+    val experiment_id
+    path geo_analysis_done
+
+    output:
+    path "ppi_done.txt"
+
+    script:
+    """
+    python3 /home/scmbag/Desktop/ADHD_Compound_Pipeline/scripts/build_ppi_network.py --experiment_id $experiment_id --db_connection_string "${params.db_connection_string}"
+    echo "PPI network completed." > ppi_done.txt
+    """
+}
+
+process perform_pathway_enrichment {
+    publishDir 'results'
+
+    input:
+    val db_connection_string
+    val experiment_id
+    path ppi_done
+
+    script:
+    """
+    python3 /home/scmbag/Desktop/ADHD_Compound_Pipeline/scripts/pathway_enrichment.py --experiment_id $experiment_id --db_connection_string $db_connection_string
+    """
+}
+
