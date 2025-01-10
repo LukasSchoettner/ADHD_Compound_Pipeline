@@ -6,7 +6,7 @@ import argparse
 
 def fetch_genes_from_db(table_name, DB_CONNECTION_STRING):
     """
-    Fetch genes from a specified table in the database using psycopg2.
+    Fetch genes from a specified table in the database using psycopg2, including aliases for matching.
 
     Parameters:
         table_name (str): The name of the table to query.
@@ -18,7 +18,25 @@ def fetch_genes_from_db(table_name, DB_CONNECTION_STRING):
     try:
         # Connect to the database
         conn = psycopg2.connect(DB_CONNECTION_STRING)
-        query = f"SELECT gene_name FROM {table_name}"
+        if table_name == "degs":
+            query = """
+                SELECT DISTINCT degs.gene_name
+                FROM degs
+                LEFT JOIN gene_aliases ga
+                ON degs.gene_name = ga.alias
+            """
+        elif table_name == "disease_genes":
+            query = """
+                SELECT DISTINCT disease_genes.gene_name
+                FROM disease_genes
+                UNION
+                SELECT DISTINCT ga.alias
+                FROM gene_aliases ga
+                INNER JOIN disease_genes dg
+                ON ga.disease_gene_id = dg.disease_gene_id
+            """
+        else:
+            raise ValueError("Unsupported table name")
 
         # Execute query and fetch data
         genes = pd.read_sql_query(query, conn)
@@ -31,7 +49,8 @@ def fetch_genes_from_db(table_name, DB_CONNECTION_STRING):
 
 def get_genes_for_enrichment(DB_CONNECTION_STRING):
     """
-    Fetch DEGs and disease genes from the database, and compute their intersection.
+    Fetch DEGs and disease genes from the database, and compute their intersection,
+    including matches with aliases.
 
     Parameters:
         DB_CONNECTION_STRING (str): Database connection string.
@@ -132,12 +151,6 @@ def get_experiment_id(experiment_id):
     return int(experiment_id)
 
 
-
-import argparse
-import os
-
-# Add the helper function here
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Perform pathway enrichment analysis")
     parser.add_argument("--experiment_id", type=str, required=True, help="Experiment ID or file containing the ID")
@@ -152,4 +165,3 @@ if __name__ == "__main__":
     enriched_pathways = perform_pathway_enrichment_from_db(DB_CONNECTION_STRING, experiment_id)
     if not enriched_pathways.empty:
         print("Pathway enrichment completed and saved to the database.")
-

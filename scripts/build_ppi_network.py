@@ -16,7 +16,8 @@ def ensure_directories_exist():
 
 def fetch_degs_disease_matches(DB_CONNECTION_STRING, experiment_id):
     """
-    Fetch matching DEGs and disease genes for the given experiment ID.
+    Fetch matching DEGs and disease genes for the given experiment ID,
+    including aliases. The current symbol is returned for the PPI network.
 
     Args:
         DB_CONNECTION_STRING (str): Database connection string.
@@ -28,16 +29,24 @@ def fetch_degs_disease_matches(DB_CONNECTION_STRING, experiment_id):
     try:
         conn = psycopg2.connect(DB_CONNECTION_STRING)
         query = """
-        SELECT DISTINCT degs.gene_name
+        SELECT DISTINCT dg.gene_name AS current_symbol
         FROM degs
-        INNER JOIN disease_genes
-        ON degs.gene_name = disease_genes.gene_name
+        INNER JOIN gene_aliases ga
+            ON degs.gene_name = ga.alias
+        INNER JOIN disease_genes dg
+            ON ga.disease_gene_id = dg.disease_gene_id
+        WHERE degs.experiment_id = %s
+        UNION
+        SELECT DISTINCT dg.gene_name AS current_symbol
+        FROM degs
+        INNER JOIN disease_genes dg
+            ON degs.gene_name = dg.gene_name
         WHERE degs.experiment_id = %s;
         """
-        matched_genes = pd.read_sql_query(query, conn, params=(experiment_id,))
+        matched_genes = pd.read_sql_query(query, conn, params=(experiment_id, experiment_id))
         print(matched_genes)
         conn.close()
-        return matched_genes['gene_name'].tolist()
+        return matched_genes['current_symbol'].tolist()
     except Exception as e:
         print(f"Error fetching matches for experiment {experiment_id}: {e}")
         return []

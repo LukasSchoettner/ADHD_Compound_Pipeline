@@ -16,9 +16,10 @@ DB_CONNECTION_STRING = "postgresql://postgres:admin@localhost/adhd_research"
 # Ensembl and HGNC API endpoints
 ENSEMBL_API = "https://rest.ensembl.org"
 HGNC_API = "https://rest.genenames.org/fetch/symbol/"
+HGNC_PREV_SYMBOL_API = "https://rest.genenames.org/search/prev_symbol/"
 
 session = requests.Session()
-x = 0
+
 # Function to read gene names from the file
 def read_genes(file_path):
     with open(file_path, "r") as file:
@@ -33,6 +34,7 @@ def log_unresolved_gene(gene_name):
 # Function to resolve gene names using HGNC
 def resolve_gene_name_hgnc(gene_name):
     headers = {"Accept": "application/json"}
+    aliases = []
     try:
         response = session.get(HGNC_API + gene_name, headers=headers, timeout=10)
         if response.ok:
@@ -40,34 +42,31 @@ def resolve_gene_name_hgnc(gene_name):
             if "response" in data and "docs" in data["response"] and len(data["response"]["docs"]) > 0:
                 result = data["response"]["docs"][0]
                 resolved_name = result.get("symbol")
-                aliases = result.get("alias_symbol", [])
-                #print(f"Resolved {gene_name} to {resolved_name}, aliases: {aliases}")
+                aliases.extend(result.get("alias_symbol", []))
                 return resolved_name, aliases
-        else:
-            response = session.get("https://rest.genenames.org/search/prev_symbol/" + gene_name, headers=headers, timeout=10)
-            if response.ok:
-                data = response.json()
-                if "response" in data and "docs" in data["response"] and len(data["response"]["docs"]) > 0:
-                    result = data["response"]["docs"][0]
-                    resolved_name = result.get("symbol")
-                    aliases = result.get("alias_symbol", [])
-                    #print(f"Resolved {gene_name} to {resolved_name}, aliases: {aliases}")
-                    return resolved_name, aliases
+
+        # Check for previous symbols if not resolved
+        response = session.get(HGNC_PREV_SYMBOL_API + gene_name, headers=headers, timeout=10)
+        if response.ok:
+            data = response.json()
+            if "response" in data and "docs" in data["response"] and len(data["response"]["docs"]) > 0:
+                result = data["response"]["docs"][0]
+                resolved_name = result.get("symbol")
+                aliases.extend(result.get("alias_symbol", []))
+                previous_symbols = result.get("prev_symbol", [])
+                aliases.extend(previous_symbols)
+                return resolved_name, aliases
 
     except requests.RequestException as e:
         print(f"HGNC request failed for {gene_name}: {e}")
     log_unresolved_gene(gene_name)
     return gene_name, []  # Return original if no match found
 
-# Function to fetch gene information from Ensembl with retries and synonyms
+# Function to fetch gene information from Ensembl
 def fetch_gene_info(gene_name):
-    #print(f"trying to fetch gene {gene_name}")
-
     if gene_name.startswith("ENSG"):  # Handle Ensembl IDs directly
-        #print("using ENSG")
         endpoint = f"/lookup/id/{gene_name}?content-type=application/json"
     else:  # Handle gene symbols
-        #print("using symbol")
         endpoint = f"/lookup/symbol/homo_sapiens/{gene_name}?content-type=application/json"
 
     try:
@@ -75,34 +74,18 @@ def fetch_gene_info(gene_name):
         if response.ok:
             return response.json()
         elif response.status_code in [429, 500, 502, 503, 504]:
-            print(f"error for {gene_name}")
+            print(f"Error for {gene_name}")
     except requests.RequestException as e:
         print(f"Request exception for {gene_name}: {e}")
 
-    #print(f"Failed to fetch info for {gene_name}.")
     return None
 
-# Function to fetch synonyms from Ensembl
-def fetch_synonyms_ensembl(gene_name):
-    endpoint = f"/xrefs/symbol/homo_sapiens/{gene_name}?content-type=application/json"
-    try:
-        response = session.get(ENSEMBL_API + endpoint, timeout=10)
-        if response.ok:
-            data = response.json()
-            synonyms = [entry["id"] for entry in data if "id" in entry]
-            #print(f"Synonyms for {gene_name}: {synonyms}")
-            return synonyms
-    except requests.RequestException as e:
-        print(f"Ensembl synonym lookup failed for {gene_name}: {e}")
-    return []
-
-# Function to save gene information to PostgreSQL database
+# Function to save gene information and aliases to PostgreSQL database
 def save_to_database(connection_string, gene_data):
-    # Connect to PostgreSQL database
     conn = psycopg2.connect(connection_string)
     cursor = conn.cursor()
 
-    # Create table if it doesn't exist
+    # Create tables if they don't exist
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS disease_genes (
             disease_gene_id TEXT PRIMARY KEY,
@@ -116,13 +99,16 @@ def save_to_database(connection_string, gene_data):
         )
     """)
 
-    # Insert gene data
-    sorted_display_names = sorted([item["display_name"] for item in gene_data if "display_name" in item])
-    print(len(sorted_display_names))
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS gene_aliases (
+            id SERIAL PRIMARY KEY,
+            disease_gene_id TEXT REFERENCES disease_genes(disease_gene_id) ON DELETE CASCADE,
+            alias VARCHAR(255) NOT NULL
+        )
+    """)
+
+    # Insert gene data and aliases
     for gene in gene_data:
-        global x
-        x +=1
-        #print(gene["display_name"] + "saved to db")
         cursor.execute("""
             INSERT INTO disease_genes (disease_gene_id, gene_name, description, biotype, object_type, source, start_position, end_position)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -133,11 +119,18 @@ def save_to_database(connection_string, gene_data):
             gene.get("description", ""),
             gene.get("biotype", ""),
             gene.get("object_type", ""),
-            "Ensembl API",  # Fixed value for source
+            "Ensembl API",
             gene.get("start", None),
             gene.get("end", None)
         ))
-    print(x)
+
+        for alias in gene.get("aliases", []):
+            cursor.execute("""
+                INSERT INTO gene_aliases (disease_gene_id, alias)
+                VALUES (%s, %s)
+                ON CONFLICT DO NOTHING
+            """, (gene["id"], alias))
+
     conn.commit()
     conn.close()
 
@@ -162,60 +155,15 @@ def main():
                     "biotype": info.get("biotype", ""),
                     "object_type": info.get("object_type", ""),
                     "start": info.get("start", None),
-                    "end": info.get("end", None)
+                    "end": info.get("end", None),
+                    "aliases": aliases
                 })
                 fetched = True
                 break
-        if not fetched:
-            synonyms = fetch_synonyms_ensembl(gene)
-
-            for synonym in synonyms:
-                info = fetch_gene_info(synonym)
-                if info:
-                    gene_data.append({
-                        "id": info.get("id"),
-                        "display_name": info.get("display_name", synonym),
-                        "description": info.get("description", ""),
-                        "biotype": info.get("biotype", ""),
-                        "object_type": info.get("object_type", ""),
-                        "start": info.get("start", None),
-                        "end": info.get("end", None)
-                    })
-                    break
 
     # Save results to database
     save_to_database(DB_CONNECTION_STRING, gene_data)
     print(f"Saved {len(gene_data)} genes to the database.")
-
-    # Find missing genes
-    missing_genes = find_missing_genes_in_database(DB_CONNECTION_STRING, gene_data)
-    print(f"Genes in gene_data but not in the database: {missing_genes}")
-    if missing_genes:
-        with open("missing_genes.txt", "w") as f:
-            f.write("\n".join(missing_genes))
-        print(f"Missing genes saved to missing_genes.txt.")
-
-def fetch_database_entries(connection_string):
-    conn = psycopg2.connect(connection_string)
-    cursor = conn.cursor()
-    cursor.execute("SELECT gene_name FROM disease_genes;")
-    db_ids = {row[0] for row in cursor.fetchall()}
-    conn.close()
-    return db_ids
-
-def find_missing_genes_in_database(connection_string, gene_data):
-    # Fetch gene IDs from the database
-    db_ids = fetch_database_entries(connection_string)  # Function to fetch IDs from the database
-    gene_data_ids = {gene["display_name"] for gene in gene_data}
-
-    # Find genes in gene_data but not in the database
-    missing_in_db = gene_data_ids - db_ids
-
-    return missing_in_db
-
-
-
-
 
 if __name__ == "__main__":
     main()
