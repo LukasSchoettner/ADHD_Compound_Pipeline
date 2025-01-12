@@ -2,7 +2,7 @@ nextflow.enable.dsl = 2
 //stop hereeeeeeeeee
 workflow {
     // Create an experiment and capture its ID
-    create_experiment(params.geo_id, params.compound, params.description)
+    create_experiment(params.geo_id, params.compound_name, params.description)
 
     // Channel to pass the experiment ID
     def experiment_id_channel = Channel.fromPath("results/experiment_id.txt")
@@ -10,11 +10,16 @@ workflow {
     // Run analyze_geo and wait for its completion
     def geo_analysis_done = analyze_geo(params.geo_id, params.samples, experiment_id_channel)
 
+    match_deg_and_disease_genes(experiment_id_channel, geo_analysis_done)
+
     // Run build_ppi_network only after analyze_geo completes
-    def ppi_done = build_ppi_network(experiment_id_channel, geo_analysis_done)
+    //def ppi_done = build_ppi_network(experiment_id_channel, geo_analysis_done)
 
     // Run perform_pathway_enrichment only after build_ppi_network completes
-    perform_pathway_enrichment(params.db_connection_string, experiment_id_channel, ppi_done)
+    //perform_pathway_enrichment(params.db_connection_string, experiment_id_channel, ppi_done)
+
+    // Run molecular_docking
+
 }
 
 
@@ -22,7 +27,7 @@ process create_experiment {
     publishDir 'results'
     input:
     val geo_id
-    val compound
+    val compound_name
     val description
 
     output:
@@ -36,7 +41,7 @@ process create_experiment {
 
     # Run the command
     psql ${params.db_connection_string} -t -A -c \\
-    "INSERT INTO experiment (geo_id, compound, description, status) VALUES ('$geo_id', '$compound', '$description', 'Running') RETURNING experiment_id;" | grep -Eo '^[0-9]+' > experiment_id.txt
+    "INSERT INTO experiment (geo_id, compound, description, status) VALUES ('$geo_id', '$compound_name', '$description', 'Running') RETURNING experiment_id;" | grep -Eo '^[0-9]+' > experiment_id.txt
     """
 
     // Pass the value via the output file
@@ -59,6 +64,36 @@ process analyze_geo {
     """
     Rscript /home/scmbag/Desktop/ADHD_Compound_Pipeline/scripts/analyze_geo.R --geo_id $geo_id --samples "$samples" --experiment_id $experiment_id --db_connection_string "${params.db_connection_string}"
     echo "Analyze GEO completed." > analyze_geo_done.txt
+    """
+}
+
+process match_deg_and_disease_genes {
+
+    input:
+    val experiment_id
+    val geo_analysis_done
+
+    script:
+    """
+    python3 /home/scmbag/Desktop/ADHD_Compound_Pipeline/scripts/match_deg_and_disease_genes.py --experiment_id $experiment_id --db_connection_string "${params.db_connection_string}"
+    """
+
+}
+
+process wait_for_docking_parameters {
+    publishDir 'results'
+
+    input:
+    val geo_analysis_done
+    path deg_results_csv
+
+    output:
+    path "docking_parameters.csv"
+
+    script:
+    """
+    echo "Waiting for user input. GUI should display matched genes and allow docking site parameter input."
+    sleep infinity
     """
 }
 
@@ -92,4 +127,32 @@ process perform_pathway_enrichment {
     python3 /home/scmbag/Desktop/ADHD_Compound_Pipeline/scripts/pathway_enrichment.py --experiment_id $experiment_id --db_connection_string $db_connection_string
     """
 }
+
+process molecular_docking {
+    publishDir 'results'
+
+    input:
+    val ligand_cid
+    val db_connection_string
+    val docking_params
+    val experiment_id
+    val geo_analysis_done
+
+    output:
+    path "docking_done.txt"
+
+    script:
+    """
+    # Run the molecular docking script
+    python3 /home/scmbag/Desktop/ADHD_Compound_Pipeline/scripts/molecular_docking.py \\
+        --ligand_cid $ligand_cid \\
+        --db_connection_string $db_connection_string \\
+        --experiment_id $experiment_id
+        --docking_params $docking_params
+
+    # Indicate completion
+    echo "Docking completed." > docking_done.txt
+    """
+}
+
 

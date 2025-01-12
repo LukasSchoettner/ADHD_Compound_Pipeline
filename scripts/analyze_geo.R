@@ -129,12 +129,18 @@ rownames(expr_data) <- expr_data$gene_symbol
 expr_data <- expr_data[, -which(names(expr_data) == "gene_symbol")]
 
 # Step 4: Define groups for samples
-pheno_data$group <- c("Control", "Control", "Gastrodin", "Gastrodin")
-design <- model.matrix(~ 0 + factor(pheno_data$group))
-colnames(design) <- c("Control", "Gastrodin")
+pheno_data$group <- c("Control", "Control", "Compound", "Compound")
 
+# Create the design matrix
+design <- model.matrix(~ 0 + factor(pheno_data$group))
+colnames(design) <- c("Control", "Compound")
+print(design)  # Debug: Check the design matrix
+
+# Create contrast matrix with a fixed contrast
+contrast_matrix <- makeContrasts(Control_vs_Compound = Compound - Control, levels = design)
+
+# Fit the model
 fit <- lmFit(expr_data, design)
-contrast_matrix <- makeContrasts(Control_vs_Gastrodin = Gastrodin - Control, levels = design)
 fit2 <- contrasts.fit(fit, contrast_matrix)
 fit2 <- eBayes(fit2)
 

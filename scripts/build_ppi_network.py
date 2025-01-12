@@ -14,41 +14,31 @@ def ensure_directories_exist():
     os.makedirs("../results", exist_ok=True)
 
 
-def fetch_degs_disease_matches(DB_CONNECTION_STRING, experiment_id):
+def fetch_therapeutic_targets(DB_CONNECTION_STRING, experiment_id):
     """
-    Fetch matching DEGs and disease genes for the given experiment ID,
-    including aliases. The current symbol is returned for the PPI network.
+    Fetch therapeutic targets for the given experiment ID.
 
     Args:
         DB_CONNECTION_STRING (str): Database connection string.
         experiment_id (int): ID of the current experiment.
 
     Returns:
-        list: List of gene symbols matched between DEGs and disease genes.
+        list: List of gene symbols associated with therapeutic targets.
     """
     try:
         conn = psycopg2.connect(DB_CONNECTION_STRING)
         query = """
         SELECT DISTINCT dg.gene_name AS current_symbol
-        FROM degs
-        INNER JOIN gene_aliases ga
-            ON degs.gene_name = ga.alias
+        FROM therapeutic_targets tt
         INNER JOIN disease_genes dg
-            ON ga.disease_gene_id = dg.disease_gene_id
-        WHERE degs.experiment_id = %s
-        UNION
-        SELECT DISTINCT dg.gene_name AS current_symbol
-        FROM degs
-        INNER JOIN disease_genes dg
-            ON degs.gene_name = dg.gene_name
-        WHERE degs.experiment_id = %s;
+            ON tt.disease_gene_id = dg.disease_gene_id
+        WHERE tt.experiment_id = %s;
         """
-        matched_genes = pd.read_sql_query(query, conn, params=(experiment_id, experiment_id))
-        print(matched_genes)
+        therapeutic_targets = pd.read_sql_query(query, conn, params=(experiment_id,))
         conn.close()
-        return matched_genes['current_symbol'].tolist()
+        return therapeutic_targets['current_symbol'].tolist()
     except Exception as e:
-        print(f"Error fetching matches for experiment {experiment_id}: {e}")
+        print(f"Error fetching therapeutic targets for experiment {experiment_id}: {e}")
         return []
 
 
@@ -192,7 +182,6 @@ def get_experiment_id(experiment_id):
     return int(experiment_id)
 
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Build PPI network")
     parser.add_argument("--experiment_id", type=str, required=True, help="Experiment ID or file containing the ID")
@@ -206,10 +195,10 @@ if __name__ == "__main__":
 
     ensure_directories_exist()
 
-    # Fetch matched DEGs and disease genes
-    target_genes = fetch_degs_disease_matches(DB_CONNECTION_STRING, experiment_id)
+    # Fetch therapeutic targets
+    target_genes = fetch_therapeutic_targets(DB_CONNECTION_STRING, experiment_id)
     if not target_genes:
-        print("No matched genes found. Exiting.")
+        print("No therapeutic targets found. Exiting.")
         exit()
 
     # Fetch STRING interactions

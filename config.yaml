@@ -7,6 +7,8 @@ pipeline:
   default_geo_id: "GSE85871"
   default_samples: "GSM2286316,GSM2286317,GSM2286238,GSM2286239"
   default_compound: "Gastrodin"
+  default_cid: "115067"
+  default_description: "Gastrodin experiment for ADHD pipeline testing"
 
 # File paths (if needed)
 paths:

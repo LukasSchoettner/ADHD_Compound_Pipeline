@@ -114,3 +114,19 @@ Feel free to submit issues or pull requests to improve the project.
 ## **License**
 This project is licensed under the MIT License. See `LICENSE` for details.
 
+---
+
+### Molecular Docking Automation
+
+**Dependencies:**
+- Python 3.8+
+- Open Babel (`sudo apt install openbabel`)
+- AutoDock Vina
+- AutoDockTools
+- PyMOL (optional, for visualization)
+
+**Usage:**
+1. Upload your ligand and protein files through the GUI.
+2. Run the molecular docking pipeline.
+3. Check results in the `docking_results/` directory.
+

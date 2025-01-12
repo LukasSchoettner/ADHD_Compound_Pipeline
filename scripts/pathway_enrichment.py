@@ -4,91 +4,56 @@ import gseapy as gp
 import os
 import argparse
 
-def fetch_genes_from_db(table_name, DB_CONNECTION_STRING):
+
+def fetch_genes_from_therapeutic_targets(db_connection_string, experiment_id):
     """
-    Fetch genes from a specified table in the database using psycopg2, including aliases for matching.
+    Fetch gene names from the therapeutic_targets table for a specific experiment.
 
     Parameters:
-        table_name (str): The name of the table to query.
-        DB_CONNECTION_STRING (str): Database connection string.
+        db_connection_string (str): Database connection string.
+        experiment_id (int): Experiment ID.
 
     Returns:
-        pd.DataFrame: DataFrame containing genes from the specified table.
+        pd.DataFrame: DataFrame containing gene names.
     """
     try:
         # Connect to the database
-        conn = psycopg2.connect(DB_CONNECTION_STRING)
-        if table_name == "degs":
-            query = """
-                SELECT DISTINCT degs.gene_name
-                FROM degs
-                LEFT JOIN gene_aliases ga
-                ON degs.gene_name = ga.alias
-            """
-        elif table_name == "disease_genes":
-            query = """
-                SELECT DISTINCT disease_genes.gene_name
-                FROM disease_genes
-                UNION
-                SELECT DISTINCT ga.alias
-                FROM gene_aliases ga
-                INNER JOIN disease_genes dg
-                ON ga.disease_gene_id = dg.disease_gene_id
-            """
-        else:
-            raise ValueError("Unsupported table name")
-
-        # Execute query and fetch data
-        genes = pd.read_sql_query(query, conn)
+        conn = psycopg2.connect(db_connection_string)
+        query = """
+            SELECT DISTINCT dg.gene_name
+            FROM therapeutic_targets tt
+            INNER JOIN disease_genes dg ON tt.disease_gene_id = dg.disease_gene_id
+            WHERE tt.experiment_id = %s;
+        """
+        genes = pd.read_sql_query(query, conn, params=(experiment_id,))
         conn.close()
         return genes
     except Exception as e:
-        print(f"Error fetching genes from table {table_name}: {e}")
+        print(f"Error fetching genes from therapeutic_targets for experiment {experiment_id}: {e}")
         return pd.DataFrame()
 
 
-def get_genes_for_enrichment(DB_CONNECTION_STRING):
+def perform_pathway_enrichment_from_db(db_connection_string, experiment_id, gene_set="KEGG_2021_Human"):
     """
-    Fetch DEGs and disease genes from the database, and compute their intersection,
-    including matches with aliases.
-
-    Parameters:
-        DB_CONNECTION_STRING (str): Database connection string.
-
-    Returns:
-        pd.DataFrame: DataFrame containing intersecting genes.
-    """
-    # Fetch genes from the database
-    degs = fetch_genes_from_db("degs", DB_CONNECTION_STRING)
-    disease_genes = fetch_genes_from_db("disease_genes", DB_CONNECTION_STRING)
-
-    # Compute the intersection
-    intersection = pd.merge(degs, disease_genes, on="gene_name")
-    print(f"Number of intersecting genes: {len(intersection)}")
-    return intersection
-
-
-def perform_pathway_enrichment_from_db(DB_CONNECTION_STRING, experiment_id, gene_set="KEGG_2021_Human"):
-    """
-    Perform pathway enrichment analysis using genes fetched from the database.
+    Perform pathway enrichment analysis using genes fetched from the therapeutic_targets table.
 
     Args:
-        DB_CONNECTION_STRING (str): Database connection string.
-        experiment_id (str): ID of the experiment.
+        db_connection_string (str): Database connection string.
+        experiment_id (int): ID of the experiment.
         gene_set (str): Gene set database to use (default: KEGG_2021_Human).
 
     Returns:
         pd.DataFrame: DataFrame containing enriched pathways.
     """
-    # Get intersecting genes
-    intersecting_genes = get_genes_for_enrichment(DB_CONNECTION_STRING)
+    # Fetch genes from the therapeutic_targets table
+    target_genes = fetch_genes_from_therapeutic_targets(db_connection_string, experiment_id)
 
     # Perform pathway enrichment if there are genes to analyze
-    if intersecting_genes.empty:
-        print("No intersecting genes found. Pathway enrichment skipped.")
+    if target_genes.empty:
+        print("No genes found in therapeutic_targets. Pathway enrichment skipped.")
         return pd.DataFrame()
 
-    gene_list = intersecting_genes['gene_name'].tolist()
+    gene_list = target_genes['gene_name'].tolist()
 
     try:
         enrichment_results = gp.enrichr(
@@ -99,7 +64,7 @@ def perform_pathway_enrichment_from_db(DB_CONNECTION_STRING, experiment_id, gene
         )
 
         enriched_df = enrichment_results.results
-        save_pathway_enrichment_to_db(enriched_df, experiment_id, DB_CONNECTION_STRING)
+        save_pathway_enrichment_to_db(enriched_df, experiment_id, db_connection_string)
         return enriched_df
 
     except Exception as e:
@@ -107,26 +72,26 @@ def perform_pathway_enrichment_from_db(DB_CONNECTION_STRING, experiment_id, gene
         return pd.DataFrame()
 
 
-def save_pathway_enrichment_to_db(enriched_df, experiment_id, DB_CONNECTION_STRING):
+def save_pathway_enrichment_to_db(enriched_df, experiment_id, db_connection_string):
     """
     Save pathway enrichment results to the database.
 
     Args:
         enriched_df (pd.DataFrame): DataFrame containing pathway enrichment results.
-        experiment_id (str): ID of the experiment.
-        DB_CONNECTION_STRING (str): Database connection string.
+        experiment_id (int): ID of the experiment.
+        db_connection_string (str): Database connection string.
     """
     try:
-        conn = psycopg2.connect(DB_CONNECTION_STRING)
+        conn = psycopg2.connect(db_connection_string)
         cursor = conn.cursor()
 
         for _, row in enriched_df.iterrows():
             cursor.execute(
                 """
-                INSERT INTO pathway_enrichment (experiment_id, p_value, enrichment_id, pathway_name)
-                VALUES (%s, %s, DEFAULT, %s)
+                INSERT INTO pathway_enrichment (experiment_id, pathway_name, p_value, enrichment_id)
+                VALUES (%s, %s, %s, DEFAULT)
                 """,
-                (experiment_id, row['Adjusted P-value'], row['Term']),
+                (experiment_id, row['Term'], row['Adjusted P-value']),
             )
 
         conn.commit()
@@ -134,6 +99,7 @@ def save_pathway_enrichment_to_db(enriched_df, experiment_id, DB_CONNECTION_STRI
         print("Pathway enrichment results saved to the database.")
     except Exception as e:
         print(f"Error saving pathway enrichment results: {e}")
+
 
 def get_experiment_id(experiment_id):
     """
@@ -160,8 +126,8 @@ if __name__ == "__main__":
 
     # Get the actual experiment ID
     experiment_id = get_experiment_id(args.experiment_id)
-    DB_CONNECTION_STRING = args.db_connection_string
+    db_connection_string = args.db_connection_string
 
-    enriched_pathways = perform_pathway_enrichment_from_db(DB_CONNECTION_STRING, experiment_id)
+    enriched_pathways = perform_pathway_enrichment_from_db(db_connection_string, experiment_id)
     if not enriched_pathways.empty:
         print("Pathway enrichment completed and saved to the database.")
