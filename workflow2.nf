@@ -25,7 +25,7 @@ process molecular_docking {
 
     script:
     """
-    python3 molecular_docking.py \\
+    python3 /home/scmbag/Desktop/ADHD_Compound_Pipeline/scripts/molecular_docking.py \\
         --ligand_cid $ligand_cid \\
         --db_connection_string $db_connection_string \\
         --experiment_id \$(cat $experiment_id) \\

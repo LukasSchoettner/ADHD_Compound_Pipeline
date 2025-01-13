@@ -2,150 +2,129 @@ import streamlit as st
 import yaml
 import subprocess
 import os
-import requests
 import pandas as pd
+import psycopg2
 
-
-def fetch_ligand_cid(compound_name):
+def fetch_therapeutic_targets(db_connection_string, experiment_id):
     """
-    Fetch PubChem CID for a given compound name.
+    Query the database to fetch therapeutic targets for a given experiment.
 
     Args:
-        compound_name (str): Name of the compound.
+        db_connection_string (str): Database connection string.
+        experiment_id (int): Experiment ID.
 
     Returns:
-        str: PubChem CID or None if not found.
+        pd.DataFrame: DataFrame containing therapeutic targets.
     """
-    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/{compound_name}/cids/JSON"
-    response = requests.get(url)
-    if response.status_code == 200:
-        data = response.json()
-        cids = data.get("IdentifierList", {}).get("CID", [])
-        if cids:
-            return str(cids[0])  # Return the first CID as a string
-    return None
+    try:
+        conn = psycopg2.connect(db_connection_string)
+        query = """
+            SELECT tt.disease_gene_id, dg.gene_name
+            FROM therapeutic_targets tt
+            INNER JOIN disease_genes dg ON tt.disease_gene_id = dg.disease_gene_id
+            WHERE tt.experiment_id = %s;
+        """
+        targets = pd.read_sql_query(query, conn, params=(experiment_id,))
+        conn.close()
+        return targets
+    except Exception as e:
+        st.error(f"Error fetching therapeutic targets: {e}")
+        return pd.DataFrame()
 
+def run_nextflow_workflow(workflow, params):
+    """
+    Run a Nextflow workflow with the given parameters.
 
-# Load configuration
-with open("config.yaml", "r") as file:
-    config = yaml.safe_load(file)
+    Args:
+        workflow (str): Workflow file name.
+        params (list): List of workflow parameters.
 
-# GUI defaults from config
-geo_id = st.text_input("GEO ID:", config["pipeline"]["default_geo_id"])
-samples = st.text_input("Samples:", config["pipeline"]["default_samples"])
-compound_name = st.text_input("Natural Compound (Name):", config["pipeline"]["default_compound"])
-ligand_cid = st.text_input("Ligand PubChem CID (Optional):", config["pipeline"]["default_cid"])
-description = st.text_input("Description:", config["pipeline"]["default_description"])
+    Returns:
+        bool: True if the workflow completed successfully, False otherwise.
+    """
+    cmd = ["nextflow", "run", workflow] + params
 
-# Checkbox for optional analyses
-include_ppi = st.checkbox("Include PPI Network Analysis", value=True)
-include_pathway = st.checkbox("Perform Pathway Enrichment Analysis", value=False)
-
-# Button to run the pipeline
-run_button = st.button("Run Pipeline")
-
-if run_button:
-    # Resolve PubChem CID if not provided
-    if not ligand_cid:
-        ligand_cid = fetch_ligand_cid(compound_name)
-        if ligand_cid:
-            st.success(f"PubChem CID for '{compound_name}' resolved: {ligand_cid}")
-        else:
-            st.error(f"Unable to resolve PubChem CID for compound: {compound_name}. Please provide a valid name or CID.")
-            st.stop()
-
-    # Confirm the pipeline execution details
-    st.write(f"Running pipeline with the following parameters:")
-    st.write(f"- GEO ID: {geo_id}")
-    st.write(f"- Samples: {samples}")
-    st.write(f"- Compound Name: {compound_name}")
-    st.write(f"- PubChem CID: {ligand_cid}")
-    st.write(f"- Experiment Description: {description}")
-
-    # Build the command
-    cmd = [
-        "nextflow", "run", "main.nf",
-        f"--geo_id={geo_id}",
-        f"--samples={samples}",
-        f"--compound_name={compound_name}",
-        f"--ligand_cid={ligand_cid}",
-        f"--description={description}"
-    ]
-
-    # Add optional parameters
-    if include_ppi:
-        cmd.append("--ppi_analysis")
-    if include_pathway:
-        cmd.append("--pathway_analysis")
-
-    # Show the command being executed
     st.write("Executing the following command:")
     st.code(" ".join(cmd))
 
-    # Run the pipeline and capture output
     try:
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         for line in process.stdout:
-            st.text(line)  # Stream output to the GUI
+            st.text(line)
         process.wait()
         if process.returncode == 0:
-            st.success("Pre-Docking Analysis completed successfully!")
+            st.success(f"{workflow} completed successfully!")
+            return True
         else:
-            st.error(f"Workflow 1 failed with return code {process.returncode}")
+            st.error(f"{workflow} failed with return code {process.returncode}")
             st.error(process.stderr.read())
+            return False
     except Exception as e:
         st.error(f"An error occurred: {e}")
+        return False
 
-# Step 2: Display matched genes and allow docking site input after DEG analysis
-deg_results_path = "results/deg_results.csv"
+def display_docking_input(therapeutic_targets):
+    """
+    Display input fields for docking site parameters for therapeutic targets.
 
-if os.path.exists(deg_results_path):
-    st.success("DEG Analysis Completed!")
-    st.subheader("Matched Genes for Docking")
+    Args:
+        therapeutic_targets (pd.DataFrame): DataFrame of therapeutic targets.
+    """
+    therapeutic_targets["Docking Site Center"] = ""
+    therapeutic_targets["Docking Site Size"] = ""
 
-    # Load matched genes
-    matched_genes = pd.read_csv(deg_results_path)
-
-    # Add columns for user input
-    matched_genes["Docking Site Center"] = ""
-    matched_genes["Docking Site Size"] = ""
-
-    # Allow user to input docking parameters
-    for idx, row in matched_genes.iterrows():
-        st.write(f"Gene: {row['Gene']}, Protein: {row['Protein']}")
-        use_auto = st.checkbox(f"Auto-detect docking site for {row['Protein']}", value=True, key=f"auto_{idx}")
+    for idx, row in therapeutic_targets.iterrows():
+        st.write(f"Gene: {row['gene_name']}, Disease Gene ID: {row['disease_gene_id']}")
+        use_auto = st.checkbox(f"Auto-detect docking site for {row['disease_gene_id']}", value=True, key=f"auto_{idx}")
         if not use_auto:
-            center = st.text_input(f"Center (x, y, z) for {row['Protein']}", value="10, 10, 10", key=f"center_{idx}")
-            size = st.text_input(f"Size (x, y, z) for {row['Protein']}", value="20, 20, 20", key=f"size_{idx}")
-            matched_genes.at[idx, "Docking Site Center"] = center
-            matched_genes.at[idx, "Docking Site Size"] = size
+            center = st.text_input(f"Center (x, y, z) for {row['disease_gene_id']}", value="10, 10, 10", key=f"center_{idx}")
+            size = st.text_input(f"Size (x, y, z) for {row['disease_gene_id']}", value="20, 20, 20", key=f"size_{idx}")
+            therapeutic_targets.at[idx, "Docking Site Center"] = center
+            therapeutic_targets.at[idx, "Docking Site Size"] = size
 
-    # Save user inputs
     if st.button("Save Docking Parameters"):
-        matched_genes.to_csv("results/docking_parameters.csv", index=False)
-        st.success("Docking parameters saved. Resume the pipeline.")
+        docking_params_path = "results/docking_parameters.csv"
+        therapeutic_targets.to_csv(docking_params_path, index=False)
+        st.success("Docking parameters saved. Ready for molecular docking.")
 
-    if st.button("Resume Pipeline"):
-        st.write("Resuming pipeline for molecular docking...")
-    cmd = [
-        "nextflow", "run", ".",
-        f"--ligand_cid={ligand_cid}",
-        f"--db_connection_string={config['database']['connection_string']}",
-        f"--docking_params=results/docking_parameters.csv"
-    ]
-    st.write("Executing the following command:")
-    st.code(" ".join(cmd))
+def main():
+    with open("config.yaml", "r") as file:
+        config = yaml.safe_load(file)
 
-    # Run the Nextflow command
-    try:
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        for line in process.stdout:
-            st.text(line)  # Stream output to the GUI
-        process.wait()
-        if process.returncode == 0:
-            st.success("Molecular docking completed successfully!")
-        else:
-            st.error(f"Pipeline run failed with return code {process.returncode}")
-            st.error(process.stderr.read())
-    except Exception as e:
-        st.error(f"An error occurred: {e}")
+    # GUI defaults
+    geo_id = st.text_input("GEO ID:", config["pipeline"]["default_geo_id"])
+    samples = st.text_input("Samples:", config["pipeline"]["default_samples"])
+    compound_name = st.text_input("Natural Compound (Name):", config["pipeline"]["default_compound"])
+    ligand_cid = st.text_input("Ligand PubChem CID:", config["pipeline"]["default_cid"])
+    description = st.text_input("Description:", config["pipeline"]["default_description"])
+
+    if st.button("Run Pre-Docking Analysis"):
+        params = [
+            f"--geo_id={geo_id}",
+            f"--samples={samples}",
+            f"--compound_name={compound_name}",
+            f"--description={description}",
+            f"--db_connection_string={config['database']['connection_string']}"
+        ]
+        if run_nextflow_workflow("workflow1.nf", params):
+            st.session_state["pre_docking_completed"] = True
+
+    if st.session_state.get("pre_docking_completed", False):
+        experiment_id_path = "results/experiment_id.txt"
+        if os.path.exists(experiment_id_path):
+            with open(experiment_id_path, "r") as f:
+                experiment_id = int(f.read().strip())
+            therapeutic_targets = fetch_therapeutic_targets(config["database"]["connection_string"], experiment_id)
+            display_docking_input(therapeutic_targets)
+
+    if os.path.exists("results/docking_parameters.csv") and st.button("Run Molecular Docking"):
+        params = [
+            f"--ligand_cid={ligand_cid}",
+            f"--db_connection_string={config['database']['connection_string']}",
+            f"--docking_params=results/docking_parameters.csv"
+        ]
+        run_nextflow_workflow("workflow2.nf", params)
+
+# Entry point
+if __name__ == "__main__":
+    main()

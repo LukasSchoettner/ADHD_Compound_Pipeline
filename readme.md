@@ -101,7 +101,7 @@ conda env export > environment.yml
 
 ### Run the Pipeline (Nextflow)
 ```bash
-nextflow run main.nf
+nextflow run workflow1.nf
 ```
 
 ---

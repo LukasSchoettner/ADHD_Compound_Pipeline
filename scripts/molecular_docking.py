@@ -2,184 +2,189 @@ import os
 import subprocess
 import requests
 import argparse
-import psycopg2
 import pandas as pd
+from sqlalchemy import create_engine
 
+###############################################################################
+# 1. Database: fetch targets, including uniprot_id if present
+###############################################################################
 
 def fetch_therapeutic_targets(db_connection_string, experiment_id):
     """
-    Fetch therapeutic targets for the given experiment ID, including disease gene IDs.
+    Fetch therapeutic targets for a given experiment_id, including disease_gene_id,
+    uniprot_id (if in DB), and gene_name for reference.
 
-    Args:
-        db_connection_string (str): Database connection string.
-        experiment_id (int): Experiment ID.
-
-    Returns:
-        list: List of disease gene IDs from therapeutic targets.
+    Returns a DataFrame with columns:
+      - disease_gene_id
+      - uniprot_id (might be NULL in DB)
+      - gene_name
     """
+    engine = create_engine(db_connection_string)
     query = """
-    SELECT DISTINCT tt.disease_gene_id
-    FROM therapeutic_targets tt
-    WHERE tt.experiment_id = %s;
+        SELECT
+            tt.disease_gene_id,
+            tt.uniprot_id,
+            dg.gene_name
+        FROM therapeutic_targets tt
+        INNER JOIN disease_genes dg
+            ON tt.disease_gene_id = dg.disease_gene_id
+        WHERE tt.experiment_id = %s
     """
+    df = pd.read_sql_query(query, engine, params=(experiment_id,))
+    engine.dispose()
+    return df
+
+
+###############################################################################
+# 2. Ensembl → UniProt if uniprot_id is missing
+###############################################################################
+
+def fetch_uniprot_ids_from_ensembl(ensembl_id):
+    """
+    Given an Ensembl gene ID, fetch any UniProt primaryAccessions from UniProt's REST API.
+    Returns a list of UniProt IDs (can be multiple isoforms).
+    """
+    url = f"https://rest.uniprot.org/uniprotkb/stream?query=ensembl:{ensembl_id}&format=json"
     try:
-        conn = psycopg2.connect(db_connection_string)
-        therapeutic_targets = pd.read_sql_query(query, conn, params=(experiment_id,))
-        conn.close()
-        return therapeutic_targets['disease_gene_id'].tolist()
-    except Exception as e:
-        raise Exception(f"Error fetching therapeutic targets: {e}")
+        resp = requests.get(url, timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
+            return [entry['primaryAccession'] for entry in data.get('results', [])]
+        else:
+            print(f"[Ensembl→UniProt] Failed for {ensembl_id}: HTTP {resp.status_code}")
+    except requests.RequestException as e:
+        print(f"[Ensembl→UniProt] Request error for {ensembl_id}: {e}")
+    return []
 
 
-def fetch_pdb_ids_from_ensembl(ensembl_id):
+def select_canonical_uniprot(uniprot_ids):
     """
-    Query RCSB PDB for PDB IDs corresponding to a given Ensembl ID.
-
-    Args:
-        ensembl_id (str): Ensembl ID.
-
-    Returns:
-        list: List of PDB IDs.
+    Given a list of possible UniProt IDs (isoforms), try to pick the 'canonical' one.
+    If no canonical is found, just return the first in the list.
     """
-    url = f"https://search.rcsb.org/rcsbsearch/v1/query"
-    query_payload = {
+    for uid in uniprot_ids:
+        meta_url = f"https://rest.uniprot.org/uniprotkb/{uid}.json"
+        try:
+            resp = requests.get(meta_url, timeout=15)
+            if resp.status_code == 200:
+                meta = resp.json()
+                # If the 'isCanonical' flag is True, pick this isoform
+                if meta.get("isCanonical", False):
+                    return uid
+        except requests.RequestException:
+            pass
+    # fallback: first if none is labeled canonical
+    return uniprot_ids[0] if uniprot_ids else None
+
+
+###############################################################################
+# 3. UniProt → PDB
+###############################################################################
+
+def fetch_pdb_ids_for_uniprot(uniprot_id):
+    """
+    Fetch all PDB IDs for a UniProt ID from RCSB.
+    Returns a list of PDB IDs (strings).
+    """
+    url = "https://search.rcsb.org/rcsbsearch/v1/query"
+    payload = {
         "query": {
             "type": "terminal",
             "service": "text",
-            "parameters": {"value": ensembl_id}
+            "parameters": {"value": uniprot_id}
         },
         "return_type": "entry",
         "request_options": {"return_all_hits": True}
     }
     try:
-        response = requests.post(url, json=query_payload)
-        if response.status_code == 200:
-            data = response.json()
+        resp = requests.post(url, json=payload, timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
             return [entry["identifier"] for entry in data.get("result_set", [])]
         else:
-            print(f"Failed to fetch PDB IDs for Ensembl ID {ensembl_id}: {response.status_code}")
+            print(f"[UniProt→PDB] Failed for {uniprot_id}: HTTP {resp.status_code}")
     except requests.RequestException as e:
-        print(f"Error querying RCSB PDB for Ensembl ID {ensembl_id}: {e}")
+        print(f"[UniProt→PDB] Request error for {uniprot_id}: {e}")
     return []
 
 
-def identify_docking_site(protein_pdb, output_dir):
-    """
-    Identify docking site automatically using AutoDockTools.
-
-    Args:
-        protein_pdb (str): Path to the protein structure file in PDB format.
-        output_dir (str): Directory to store output grid parameters.
-
-    Returns:
-        tuple: Center (x, y, z) and size (x, y, z) of the docking grid box.
-    """
-    try:
-        print(f"Identifying docking site for {protein_pdb}...")
-        grid_file = os.path.join(output_dir, "grid_params.txt")
-        subprocess.run([
-            "pythonsh", "prepare_gpf4.py",
-            "-r", protein_pdb,
-            "-o", grid_file
-        ], check=True)
-        with open(grid_file, "r") as f:
-            lines = f.readlines()
-            center = None
-            size = None
-            for line in lines:
-                if line.startswith("GRID_CENTER"):
-                    center = tuple(map(float, line.split()[1:4]))
-                if line.startswith("GRID_SIZE"):
-                    size = tuple(map(float, line.split()[1:4]))
-            if center and size:
-                print(f"Docking site identified: Center={center}, Size={size}")
-                return center, size
-        raise Exception("Failed to identify docking site parameters.")
-    except subprocess.CalledProcessError as e:
-        raise Exception(f"AutoDockTools docking site identification failed: {e}")
-
+###############################################################################
+# 4. File Downloads & Preparation
+###############################################################################
 
 def download_ligand(pubchem_id, output_file):
     """
-    Download ligand 3D structure from PubChem.
-
-    Args:
-        pubchem_id (str): PubChem Compound ID (CID).
-        output_file (str): Output file path.
+    Download a 3D SDF of the ligand from PubChem by CID.
     """
     url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{pubchem_id}/record/SDF/?record_type=3d"
-    response = requests.get(url)
-    if response.status_code == 200:
+    resp = requests.get(url, timeout=15)
+    if resp.status_code == 200:
         with open(output_file, "wb") as f:
-            f.write(response.content)
-        print(f"Ligand file saved as {output_file}")
+            f.write(resp.content)
+        print(f"[Ligand] Downloaded: {output_file}")
     else:
-        raise Exception(f"Failed to download ligand. Status code: {response.status_code}")
+        raise RuntimeError(f"[Ligand] Download error for CID {pubchem_id}: HTTP {resp.status_code}")
+
+
+def prepare_ligand(input_sdf, output_pdbqt):
+    """
+    Convert ligand to 3D coordinates, minimize, output as PDBQT with hydrogens.
+    """
+    print("[Ligand] Preparing ligand...")
+    subprocess.run(["obabel", input_sdf, "-O", "temp.pdb", "--gen3d"], check=True)
+    subprocess.run(["obabel", "temp.pdb", "-O", "temp_minimized.pdb", "--minimize"], check=True)
+    subprocess.run([
+        "prepare_ligand",
+        "-l", "temp_minimized.pdb",
+        "-o", output_pdbqt,
+        "-A", "hydrogens"
+    ], check=True)
+    os.remove("temp.pdb")
+    os.remove("temp_minimized.pdb")
+    print(f"[Ligand] Prepared: {output_pdbqt}")
 
 
 def download_protein(pdb_id, output_file):
     """
-    Download protein structure from RCSB PDB.
-
-    Args:
-        pdb_id (str): Protein Data Bank ID.
-        output_file (str): File path to save the protein structure.
+    Download a PDB file from RCSB.
     """
     url = f"https://files.rcsb.org/download/{pdb_id}.pdb"
-    response = requests.get(url)
-    if response.status_code == 200:
+    resp = requests.get(url, timeout=15)
+    if resp.status_code == 200:
         with open(output_file, "wb") as f:
-            f.write(response.content)
-        print(f"Protein structure saved as {output_file}")
+            f.write(resp.content)
+        print(f"[Protein] Downloaded: {output_file}")
     else:
-        raise Exception(f"Failed to download protein structure for {pdb_id}. HTTP status: {response.status_code}")
+        raise RuntimeError(f"[Protein] Download error for PDB {pdb_id}: HTTP {resp.status_code}")
 
 
-def prepare_ligand(input_file, output_file):
+def prepare_protein(input_pdb, output_pdbqt):
     """
-    Prepare ligand for docking.
-
-    Args:
-        input_file (str): Path to input ligand file in SDF format.
-        output_file (str): Path to output ligand file in PDBQT format.
+    Run prepare_receptor to add hydrogens & convert to PDBQT for docking.
     """
-    print("Preparing ligand...")
-    subprocess.run(["obabel", input_file, "-O", "temp.pdb", "--gen3d"], check=True)
-    subprocess.run(["obabel", "temp.pdb", "-O", "temp_minimized.pdb", "--minimize"], check=True)
-    subprocess.run(["prepare_ligand", "-l", "temp_minimized.pdb", "-o", output_file, "-A", "hydrogens"], check=True)
-    os.remove("temp.pdb")
-    os.remove("temp_minimized.pdb")
-    print(f"Ligand prepared: {output_file}")
+    print("[Protein] Preparing receptor...")
+    subprocess.run([
+        "prepare_receptor",
+        "-r", input_pdb,
+        "-o", output_pdbqt,
+        "-A", "hydrogens"
+    ], check=True)
+    print(f"[Protein] Prepared: {output_pdbqt}")
 
 
-def prepare_protein(input_file, output_file):
+###############################################################################
+# 5. Docking
+###############################################################################
+
+def perform_docking(vina_exec, protein_pdbqt, ligand_pdbqt, output_dir, center, size):
     """
-    Prepare protein for docking.
-
-    Args:
-        input_file (str): Path to input protein file in PDB format.
-        output_file (str): Path to output protein file in PDBQT format.
+    Run AutoDock Vina with the specified bounding box (center, size).
     """
-    print(f"Preparing protein: {input_file} -> {output_file}")
-    subprocess.run(["prepare_receptor", "-r", input_file, "-o", output_file, "-A", "hydrogens"], check=True)
-    print(f"Protein prepared: {output_file}")
+    out_pdbqt = os.path.join(output_dir, f"{os.path.basename(protein_pdbqt)}_docked.pdbqt")
+    log_file = os.path.join(output_dir, f"{os.path.basename(protein_pdbqt)}_docking.log")
 
-
-def perform_docking(vina_executable, protein_pdbqt, ligand_pdbqt, output_dir, center, size):
-    """
-    Perform molecular docking using AutoDock Vina.
-
-    Args:
-        vina_executable (str): Path to the AutoDock Vina executable.
-        protein_pdbqt (str): Path to prepared protein file in PDBQT format.
-        ligand_pdbqt (str): Path to prepared ligand file in PDBQT format.
-        output_dir (str): Directory to store docking results.
-        center (tuple): Coordinates for docking box center (x, y, z).
-        size (tuple): Dimensions for docking box size (x, y, z).
-    """
-    print("Running docking simulation...")
-    docking_command = [
-        vina_executable,
+    cmd = [
+        vina_exec,
         "--receptor", protein_pdbqt,
         "--ligand", ligand_pdbqt,
         "--center_x", str(center[0]),
@@ -188,25 +193,23 @@ def perform_docking(vina_executable, protein_pdbqt, ligand_pdbqt, output_dir, ce
         "--size_x", str(size[0]),
         "--size_y", str(size[1]),
         "--size_z", str(size[2]),
-        "--out", os.path.join(output_dir, f"{os.path.basename(protein_pdbqt)}_docked.pdbqt"),
-        "--log", os.path.join(output_dir, f"{os.path.basename(protein_pdbqt)}_docking.log"),
+        "--out", out_pdbqt,
+        "--log", log_file
     ]
-    result = subprocess.run(docking_command, capture_output=True, text=True)
-    if result.returncode == 0:
-        print("Docking completed successfully!")
-    else:
-        raise Exception(f"Docking failed: {result.stderr}")
+    print(f"[Docking] Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"[Docking] Failed: {result.stderr}")
+    print("[Docking] Completed successfully!")
 
+
+###############################################################################
+# 6. Possibly parse experiment_id from file
+###############################################################################
 
 def get_experiment_id(experiment_id):
     """
-    Parse experiment_id from file if it is a file path.
-
-    Args:
-        experiment_id (str): Either the experiment ID as a string or a file path.
-
-    Returns:
-        int: Parsed experiment ID.
+    If experiment_id is a path, read from file. Otherwise parse as int directly.
     """
     if os.path.isfile(experiment_id):
         with open(experiment_id, "r") as f:
@@ -214,69 +217,65 @@ def get_experiment_id(experiment_id):
     return int(experiment_id)
 
 
+###############################################################################
+# 7. Main: bring it all together
+###############################################################################
+
 if __name__ == "__main__":
-    # Parse arguments from Nextflow
-    parser = argparse.ArgumentParser(description="Perform molecular docking")
-    parser.add_argument("--ligand_cid", required=True, help="PubChem CID of the ligand")
-    parser.add_argument("--db_connection_string", required=True, help="Database connection string")
-    parser.add_argument("--experiment_id", type=str, required=True, help="Experiment ID or file containing the ID")
-    parser.add_argument("--vina_executable", default="vina", help="Path to AutoDock Vina executable")
-    parser.add_argument("--output_dir", default="docking_results", help="Directory to save docking results")
-    parser.add_argument("--docking_params", required=True, help="Path to docking parameters file")
+    parser = argparse.ArgumentParser(description="Automatic ADHD drug discovery pipeline")
+    parser.add_argument("--db_connection_string", required=True,
+                        help="SQLAlchemy-style DB URI (e.g. postgresql+psycopg2://user:pw@host/db)")
+    parser.add_argument("--experiment_id", required=True,
+                        help="Experiment ID integer or file containing the ID")
+    parser.add_argument("--ligand_cid", required=True,
+                        help="PubChem CID for the ligand to dock")
+    parser.add_argument("--vina_executable", default="vina",
+                        help="Path to the 'vina' executable")
+    parser.add_argument("--output_dir", default="docking_results",
+                        help="Directory to store output PDB/PDBQT files")
+    parser.add_argument("--docking_params", required=False,
+                        help="CSV with 'Protein','Docking Site Center','Docking Site Size'. If omitted, use fallback box.")
     args = parser.parse_args()
 
-    # Prepare paths and directories
     os.makedirs(args.output_dir, exist_ok=True)
-    ligand_sdf = os.path.join(args.output_dir, "ligand.sdf")
-    ligand_pdbqt = os.path.join(args.output_dir, "ligand.pdbqt")
 
-    experiment_id = get_experiment_id(args.experiment_id)
+    # Convert experiment_id if it's a file
+    exp_id = get_experiment_id(args.experiment_id)
 
     try:
-        # Fetch therapeutic targets
-        ensembl_ids = fetch_therapeutic_targets(args.db_connection_string, experiment_id)
+        # 1) Fetch therapeutic targets: disease_gene_id + uniprot_id
+        targets_df = fetch_therapeutic_targets(args.db_connection_string, exp_id)
+        if targets_df.empty:
+            raise RuntimeError("No therapeutic targets found for this experiment.")
 
-        # Map Ensembl IDs to PDB IDs
-        pdb_ids = []
-        for ensembl_id in ensembl_ids:
-            pdb_ids.extend(fetch_pdb_ids_from_ensembl(ensembl_id))
+        # 2) For each target, if uniprot_id is missing, do Ensembl → UniProt → canonical pick
+        for idx, row in targets_df.iterrows():
+            if not row["uniprot_id"] or pd.isna(row["uniprot_id"]):
+                ensembl_id = row["disease_gene_id"]
+                possible_uniprots = fetch_uniprot_ids_from_ensembl(ensembl_id)
+                chosen_uniprot = select_canonical_uniprot(possible_uniprots)
+                targets_df.at[idx, "uniprot_id"] = chosen_uniprot  # store in memory
+                print(f"[Auto] Resolved {ensembl_id} → {chosen_uniprot}")
 
-        if not pdb_ids:
-            raise Exception("No PDB IDs could be resolved from therapeutic targets.")
-
-        # Download and prepare ligand
-        download_ligand(args.ligand_cid, ligand_sdf)
-        prepare_ligand(ligand_sdf, ligand_pdbqt)
-
-        # Process each protein
-        docking_params = pd.read_csv(args.docking_params)
-        for _, row in docking_params.iterrows():
-            pdb_id = row["Protein"]
-            protein_pdb = os.path.join(args.output_dir, f"{pdb_id}.pdb")
-            protein_pdbqt = os.path.join(args.output_dir, f"{pdb_id}.pdbqt")
-
-            # Download and prepare protein
-            download_protein(pdb_id, protein_pdb)
-            prepare_protein(protein_pdb, protein_pdbqt)
-
-            # Determine docking site
-            if pd.notna(row["Docking Site Center"]) and pd.notna(row["Docking Site Size"]):
-                center = tuple(map(float, row["Docking Site Center"].strip("()").split(",")))
-                size = tuple(map(float, row["Docking Site Size"].strip("()").split(",")))
+        # 3) For each uniprot, fetch PDB IDs, pick first one automatically
+        #    (or you could store them all and loop further)
+        all_pdbs = []
+        for idx, row in targets_df.iterrows():
+            uni_id = row["uniprot_id"]
+            if not uni_id or pd.isna(uni_id):
+                print(f"[Warning] Could not resolve UniProt for row:\n{row}")
+                continue
+            pdb_list = fetch_pdb_ids_for_uniprot(uni_id)
+            if pdb_list:
+                chosen_pdb = pdb_list[0]
+                all_pdbs.append(chosen_pdb)
+                print(f"[Auto] {uni_id} → picking PDB {chosen_pdb}")
             else:
-                center, size = identify_docking_site(protein_pdb, args.output_dir)
+                print(f"[Warning] No PDBs found for {uni_id}")
 
-            # Perform docking
-            perform_docking(
-                vina_executable=args.vina_executable,
-                protein_pdbqt=protein_pdbqt,
-                ligand_pdbqt=ligand_pdbqt,
-                output_dir=args.output_dir,
-                center=center,
-                size=size
-            )
+        if not all_pdbs:
+            raise RuntimeError("No PDB IDs resolved for any targets.")
 
-        print("Molecular docking completed successfully.")
-
-    except Exception as e:
-        print(f"Error during molecular docking: {e}")
+        # 4) Download and prepare the ligand
+        ligand_sdf = os.path.join(args.output_dir, "ligand.sdf")
+        ligand_pdbqt = os.path.jo
