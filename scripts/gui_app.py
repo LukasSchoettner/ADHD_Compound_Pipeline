@@ -4,59 +4,45 @@ import subprocess
 import os
 import pandas as pd
 import psycopg2
+from sqlalchemy import create_engine
 
 def fetch_therapeutic_targets(db_connection_string, experiment_id):
     """
     Query the database to fetch therapeutic targets for a given experiment.
-
-    Args:
-        db_connection_string (str): Database connection string.
-        experiment_id (int): Experiment ID.
-
-    Returns:
-        pd.DataFrame: DataFrame containing therapeutic targets.
     """
     try:
-        conn = psycopg2.connect(db_connection_string)
+        engine = create_engine(db_connection_string)
         query = """
             SELECT tt.disease_gene_id, dg.gene_name
             FROM therapeutic_targets tt
             INNER JOIN disease_genes dg ON tt.disease_gene_id = dg.disease_gene_id
-            WHERE tt.experiment_id = %s;
+            WHERE tt.experiment_id = %(exp_id)s;
         """
-        targets = pd.read_sql_query(query, conn, params=(experiment_id,))
-        conn.close()
+        params_dict = {"exp_id": experiment_id}
+        targets = pd.read_sql_query(query, con=engine, params=params_dict)
+        engine.dispose()
         return targets
     except Exception as e:
         st.error(f"Error fetching therapeutic targets: {e}")
         return pd.DataFrame()
 
-def run_nextflow_workflow(workflow, params):
+def run_nextflow_workflow(workflow_file, params):
     """
     Run a Nextflow workflow with the given parameters.
-
-    Args:
-        workflow (str): Workflow file name.
-        params (list): List of workflow parameters.
-
-    Returns:
-        bool: True if the workflow completed successfully, False otherwise.
     """
-    cmd = ["nextflow", "run", workflow] + params
-
-    st.write("Executing the following command:")
+    cmd = ["nextflow", "run", workflow_file] + params
+    st.write("Executing Nextflow command:")
     st.code(" ".join(cmd))
-
     try:
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         for line in process.stdout:
             st.text(line)
         process.wait()
         if process.returncode == 0:
-            st.success(f"{workflow} completed successfully!")
+            st.success(f"{workflow_file} completed successfully!")
             return True
         else:
-            st.error(f"{workflow} failed with return code {process.returncode}")
+            st.error(f"{workflow_file} failed with return code {process.returncode}")
             st.error(process.stderr.read())
             return False
     except Exception as e:
@@ -65,20 +51,21 @@ def run_nextflow_workflow(workflow, params):
 
 def display_docking_input(therapeutic_targets):
     """
-    Display input fields for docking site parameters for therapeutic targets.
-
-    Args:
-        therapeutic_targets (pd.DataFrame): DataFrame of therapeutic targets.
+    Display input fields for docking site parameters for each therapeutic target.
+    Saves them to a CSV if the user clicks "Save Docking Parameters."
     """
     therapeutic_targets["Docking Site Center"] = ""
     therapeutic_targets["Docking Site Size"] = ""
 
     for idx, row in therapeutic_targets.iterrows():
         st.write(f"Gene: {row['gene_name']}, Disease Gene ID: {row['disease_gene_id']}")
-        use_auto = st.checkbox(f"Auto-detect docking site for {row['disease_gene_id']}", value=True, key=f"auto_{idx}")
+        use_auto = st.checkbox(f"Auto-detect docking site for {row['disease_gene_id']}",
+                               value=True, key=f"auto_{idx}")
         if not use_auto:
-            center = st.text_input(f"Center (x, y, z) for {row['disease_gene_id']}", value="10, 10, 10", key=f"center_{idx}")
-            size = st.text_input(f"Size (x, y, z) for {row['disease_gene_id']}", value="20, 20, 20", key=f"size_{idx}")
+            center = st.text_input(f"Center (x, y, z) for {row['disease_gene_id']}",
+                                   value="10, 10, 10", key=f"center_{idx}")
+            size = st.text_input(f"Size (x, y, z) for {row['disease_gene_id']}",
+                                 value="20, 20, 20", key=f"size_{idx}")
             therapeutic_targets.at[idx, "Docking Site Center"] = center
             therapeutic_targets.at[idx, "Docking Site Size"] = size
 
@@ -88,43 +75,68 @@ def display_docking_input(therapeutic_targets):
         st.success("Docking parameters saved. Ready for molecular docking.")
 
 def main():
-    with open("config.yaml", "r") as file:
-        config = yaml.safe_load(file)
+    # 1. Load config
+    with open("config.yaml", "r") as f:
+        config = yaml.safe_load(f)
 
-    # GUI defaults
-    geo_id = st.text_input("GEO ID:", config["pipeline"]["default_geo_id"])
-    samples = st.text_input("Samples:", config["pipeline"]["default_samples"])
-    compound_name = st.text_input("Natural Compound (Name):", config["pipeline"]["default_compound"])
-    ligand_cid = st.text_input("Ligand PubChem CID:", config["pipeline"]["default_cid"])
-    description = st.text_input("Description:", config["pipeline"]["default_description"])
+    st.title("ADHD Compound Pipeline")
 
+    # 2. Basic pipeline inputs
+    geo_id = st.text_input("GEO ID:", value=config["pipeline"]["default_geo_id"])
+    description = st.text_input("Description:", value=config["pipeline"]["default_description"])
+    compound_name = st.text_input("Natural Compound (Name):", value=config["pipeline"]["default_compound"])
+
+    # 3. Fields for Control and Compound samples
+    control_samples_str = st.text_input("Control samples (comma-separated):",
+                                        value="GSM2286316,GSM2286317")
+    compound_samples_str = st.text_input("Compound samples (comma-separated):",
+                                         value="GSM2286238,GSM2286239")
+
+    # Merge them for the Nextflow pipeline
+    control_list = [s.strip() for s in control_samples_str.split(",") if s.strip()]
+    compound_list = [s.strip() for s in compound_samples_str.split(",") if s.strip()]
+
+    samples_merged = ",".join(control_list + compound_list)
+    groups_merged = ",".join(["Control"] * len(control_list) +
+                             ["Compound"] * len(compound_list))
+
+    # 4. "Run Pre-Docking Analysis" - calls workflow1.nf
     if st.button("Run Pre-Docking Analysis"):
         params = [
             f"--geo_id={geo_id}",
-            f"--samples={samples}",
+            f"--samples={samples_merged}",
+            f"--groups={groups_merged}",
             f"--compound_name={compound_name}",
             f"--description={description}",
             f"--db_connection_string={config['database']['connection_string']}"
         ]
-        if run_nextflow_workflow("workflow1.nf", params):
+        success = run_nextflow_workflow("workflow1.nf", params)
+        if success:
             st.session_state["pre_docking_completed"] = True
 
+    # 5. If pre-docking completed, show docking input
     if st.session_state.get("pre_docking_completed", False):
         experiment_id_path = "results/experiment_id.txt"
         if os.path.exists(experiment_id_path):
             with open(experiment_id_path, "r") as f:
                 experiment_id = int(f.read().strip())
-            therapeutic_targets = fetch_therapeutic_targets(config["database"]["connection_string"], experiment_id)
+
+            # Fetch the targets from DB, let user specify docking boxes
+            therapeutic_targets = fetch_therapeutic_targets(config["database"]["connection_string"],
+                                                            experiment_id)
             display_docking_input(therapeutic_targets)
 
-    if os.path.exists("results/docking_parameters.csv") and st.button("Run Molecular Docking"):
-        params = [
-            f"--ligand_cid={ligand_cid}",
-            f"--db_connection_string={config['database']['connection_string']}",
-            f"--docking_params=results/docking_parameters.csv"
-        ]
-        run_nextflow_workflow("workflow2.nf", params)
+            # If docking params exist, user can run "Run Molecular Docking"
+            docking_params_csv = "results/docking_parameters.csv"
+            if os.path.exists(docking_params_csv) and st.button("Run Molecular Docking"):
+                # 6. Call workflow2.nf, passing the CSV file path
+                params = [
+                    f"--db_connection_string={config['database']['connection_string']}",
+                    f"--ligand_cid={config['pipeline']['default_cid']}",
+                    f"--experiment_id={experiment_id}",
+                    f"--docking_params={docking_params_csv}"
+                ]
+                run_nextflow_workflow("workflow2.nf", params)
 
-# Entry point
 if __name__ == "__main__":
     main()

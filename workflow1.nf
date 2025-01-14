@@ -8,7 +8,7 @@ workflow {
     def experiment_id_channel = Channel.fromPath("results/experiment_id.txt")
 
     // Run analyze_geo and wait for its completion
-    def geo_analysis_done = analyze_geo(params.geo_id, params.samples, experiment_id_channel)
+    def geo_analysis_done = analyze_geo(params.geo_id, params.samples, params.groups, experiment_id_channel)
 
     match_deg_and_disease_genes(experiment_id_channel, geo_analysis_done)
 
@@ -55,6 +55,7 @@ process analyze_geo {
     input:
     val geo_id
     val samples
+    val groups
     val experiment_id
 
     output:
@@ -62,7 +63,7 @@ process analyze_geo {
 
     script:
     """
-    Rscript /home/scmbag/Desktop/ADHD_Compound_Pipeline/scripts/analyze_geo.R --geo_id $geo_id --samples "$samples" --experiment_id $experiment_id --db_connection_string "${params.db_connection_string}"
+    Rscript /home/scmbag/Desktop/ADHD_Compound_Pipeline/scripts/analyze_geo.R --geo_id $geo_id --samples "$samples" --experiment_id $experiment_id --groups $groups --db_connection_string "${params.db_connection_string}"
     echo "Analyze GEO completed." > analyze_geo_done.txt
     """
 }

@@ -9,8 +9,11 @@ pipeline:
   default_compound: "Gastrodin"
   default_cid: "115067"
   default_description: "Gastrodin experiment for ADHD pipeline testing"
+  default_docking_center: "0, 0, 0"
+  default_docking_size: "20, 20, 20"
 
 # File paths (if needed)
 paths:
   logs: "./logs/"
   results: "./results/"
+  mgltools: "/home/scmbag/Desktop/ADHD_Compound_Pipeline/tools/MGLTools-1.5.7/MGLToolsPckgs/AutoDockTools/Utilities24"

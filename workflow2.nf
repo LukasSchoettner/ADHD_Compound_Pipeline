@@ -30,6 +30,7 @@ process molecular_docking {
         --db_connection_string $db_connection_string \\
         --experiment_id \$(cat $experiment_id) \\
         --docking_params $docking_params
+        --output_dir "/home/scmbag/Desktop/ADHD_Compound_Pipeline/results/"
     echo "Docking completed." > docking_done.txt
     """
 }

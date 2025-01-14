@@ -5,6 +5,7 @@ channels:
   - conda-forge
   - https://repo.anaconda.com/pkgs/main
   - https://repo.anaconda.com/pkgs/r
+  - ADHD_DB_CONN=postgresql://postgres:admin@localhost/adhd_research
 dependencies:
   - openbabel
   - autodock-vina

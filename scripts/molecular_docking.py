@@ -4,21 +4,13 @@ import requests
 import argparse
 import pandas as pd
 from sqlalchemy import create_engine
+import numpy as np  # if you want to handle arrays for autodetect
 
 ###############################################################################
-# 1. Database: fetch targets, including uniprot_id if present
+# 1. Database Queries
 ###############################################################################
 
 def fetch_therapeutic_targets(db_connection_string, experiment_id):
-    """
-    Fetch therapeutic targets for a given experiment_id, including disease_gene_id,
-    uniprot_id (if in DB), and gene_name for reference.
-
-    Returns a DataFrame with columns:
-      - disease_gene_id
-      - uniprot_id (might be NULL in DB)
-      - gene_name
-    """
     engine = create_engine(db_connection_string)
     query = """
         SELECT
@@ -34,152 +26,156 @@ def fetch_therapeutic_targets(db_connection_string, experiment_id):
     engine.dispose()
     return df
 
-
 ###############################################################################
-# 2. Ensembl → UniProt if uniprot_id is missing
-###############################################################################
-
-def fetch_uniprot_ids_from_ensembl(ensembl_id):
-    """
-    Given an Ensembl gene ID, fetch any UniProt primaryAccessions from UniProt's REST API.
-    Returns a list of UniProt IDs (can be multiple isoforms).
-    """
-    url = f"https://rest.uniprot.org/uniprotkb/stream?query=ensembl:{ensembl_id}&format=json"
-    try:
-        resp = requests.get(url, timeout=15)
-        if resp.status_code == 200:
-            data = resp.json()
-            return [entry['primaryAccession'] for entry in data.get('results', [])]
-        else:
-            print(f"[Ensembl→UniProt] Failed for {ensembl_id}: HTTP {resp.status_code}")
-    except requests.RequestException as e:
-        print(f"[Ensembl→UniProt] Request error for {ensembl_id}: {e}")
-    return []
-
-
-def select_canonical_uniprot(uniprot_ids):
-    """
-    Given a list of possible UniProt IDs (isoforms), try to pick the 'canonical' one.
-    If no canonical is found, just return the first in the list.
-    """
-    for uid in uniprot_ids:
-        meta_url = f"https://rest.uniprot.org/uniprotkb/{uid}.json"
-        try:
-            resp = requests.get(meta_url, timeout=15)
-            if resp.status_code == 200:
-                meta = resp.json()
-                # If the 'isCanonical' flag is True, pick this isoform
-                if meta.get("isCanonical", False):
-                    return uid
-        except requests.RequestException:
-            pass
-    # fallback: first if none is labeled canonical
-    return uniprot_ids[0] if uniprot_ids else None
-
-
-###############################################################################
-# 3. UniProt → PDB
+# 2. Ligand Handling with Open Babel
 ###############################################################################
 
-def fetch_pdb_ids_for_uniprot(uniprot_id):
+def download_ligand(pubchem_cid, output_sdf):
     """
-    Fetch all PDB IDs for a UniProt ID from RCSB.
-    Returns a list of PDB IDs (strings).
+    Download a 3D SDF from PubChem for the given CID.
     """
-    url = "https://search.rcsb.org/rcsbsearch/v1/query"
-    payload = {
-        "query": {
-            "type": "terminal",
-            "service": "text",
-            "parameters": {"value": uniprot_id}
-        },
-        "return_type": "entry",
-        "request_options": {"return_all_hits": True}
-    }
-    try:
-        resp = requests.post(url, json=payload, timeout=15)
-        if resp.status_code == 200:
-            data = resp.json()
-            return [entry["identifier"] for entry in data.get("result_set", [])]
-        else:
-            print(f"[UniProt→PDB] Failed for {uniprot_id}: HTTP {resp.status_code}")
-    except requests.RequestException as e:
-        print(f"[UniProt→PDB] Request error for {uniprot_id}: {e}")
-    return []
-
-
-###############################################################################
-# 4. File Downloads & Preparation
-###############################################################################
-
-def download_ligand(pubchem_id, output_file):
-    """
-    Download a 3D SDF of the ligand from PubChem by CID.
-    """
-    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{pubchem_id}/record/SDF/?record_type=3d"
+    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{pubchem_cid}/record/SDF/?record_type=3d"
     resp = requests.get(url, timeout=15)
     if resp.status_code == 200:
-        with open(output_file, "wb") as f:
+        with open(output_sdf, "wb") as f:
             f.write(resp.content)
-        print(f"[Ligand] Downloaded: {output_file}")
+        print(f"[Ligand] Downloaded to {output_sdf}")
     else:
-        raise RuntimeError(f"[Ligand] Download error for CID {pubchem_id}: HTTP {resp.status_code}")
+        raise RuntimeError(f"[Ligand] Download error for CID={pubchem_cid}. HTTP {resp.status_code}")
 
+def prepare_ligand_with_openbabel(input_sdf, output_pdbqt):
+    """
+    Use Open Babel to:
+      1) SDF -> PDB (generate 3D, minimize)
+      2) PDB -> PDBQT (partial charges, add hydrogens)
+    """
+    print("[Ligand] Generating PDB + Minimization with Open Babel...")
+    subprocess.run(["obabel", input_sdf, "-O", "temp_ligand.pdb",
+                    "--gen3d", "--minimize"], check=True)
 
-def prepare_ligand(input_sdf, output_pdbqt):
-    """
-    Convert ligand to 3D coordinates, minimize, output as PDBQT with hydrogens.
-    """
-    print("[Ligand] Preparing ligand...")
-    subprocess.run(["obabel", input_sdf, "-O", "temp.pdb", "--gen3d"], check=True)
-    subprocess.run(["obabel", "temp.pdb", "-O", "temp_minimized.pdb", "--minimize"], check=True)
+    print("[Ligand] Converting minimized PDB -> PDBQT (with partial charges)...")
     subprocess.run([
-        "prepare_ligand",
-        "-l", "temp_minimized.pdb",
-        "-o", output_pdbqt,
-        "-A", "hydrogens"
+        "obabel", "temp_ligand.pdb",
+        "-O", output_pdbqt,
+        "--addcharges",
+        "-xh"
     ], check=True)
-    os.remove("temp.pdb")
-    os.remove("temp_minimized.pdb")
+
+    os.remove("temp_ligand.pdb")
     print(f"[Ligand] Prepared: {output_pdbqt}")
 
+###############################################################################
+# 3. Protein Fetching & Preparation
+###############################################################################
 
-def download_protein(pdb_id, output_file):
+def fetch_alphafold_pdb(uniprot_id, output_pdb):
     """
-    Download a PDB file from RCSB.
+    Download the AlphaFold-predicted structure for the given UniProt ID.
     """
-    url = f"https://files.rcsb.org/download/{pdb_id}.pdb"
+    url = f"https://alphafold.ebi.ac.uk/files/AF-{uniprot_id}-F1-model_v4.pdb"
     resp = requests.get(url, timeout=15)
     if resp.status_code == 200:
-        with open(output_file, "wb") as f:
-            f.write(resp.content)
-        print(f"[Protein] Downloaded: {output_file}")
+        with open(output_pdb, "w") as f:
+            f.write(resp.text)
+        print(f"[AlphaFold] Downloaded {uniprot_id} -> {output_pdb}")
     else:
-        raise RuntimeError(f"[Protein] Download error for PDB {pdb_id}: HTTP {resp.status_code}")
+        raise RuntimeError(f"[AlphaFold] No structure found for {uniprot_id}. HTTP {resp.status_code}")
 
-
-def prepare_protein(input_pdb, output_pdbqt):
+def prepare_protein_with_openbabel(input_pdb, output_pdbqt):
     """
-    Run prepare_receptor to add hydrogens & convert to PDBQT for docking.
+    Use Open Babel to convert a PDB to PDBQT, adding partial charges & hydrogens.
     """
-    print("[Protein] Preparing receptor...")
+    print("[Protein] Converting PDB -> PDBQT with Open Babel...")
     subprocess.run([
-        "prepare_receptor",
-        "-r", input_pdb,
-        "-o", output_pdbqt,
-        "-A", "hydrogens"
+        "obabel", input_pdb,
+        "-O", output_pdbqt,
+        "--addcharges",
+        "-xh"
     ], check=True)
+
     print(f"[Protein] Prepared: {output_pdbqt}")
 
+###############################################################################
+# 4. Auto-Detect Pocket (Placeholder Example)
+###############################################################################
+
+def autodetect_pocket(protein_pdb):
+    """
+    Example using 'fpocket' to detect the main pocket and compute bounding box.
+    Adjust as needed for your tool (P2Rank, AutoSite, etc.).
+    """
+    base_name = os.path.splitext(os.path.basename(protein_pdb))[0]
+    out_dir = f"{base_name}_out"
+
+    # 1) Run fpocket
+    cmd = ["fpocket", "-f", protein_pdb]
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"[AutoDetect] fpocket failed: {e}")
+        return (0.0,0.0,0.0), (20.0,20.0,20.0)
+
+    # 2) Check pocket0
+    pockets_dir = os.path.join(f"{base_name}_out", "pockets")
+    pocket0 = os.path.join(pockets_dir, "pocket0_vert.pdb")
+    if not os.path.isfile(pocket0):
+        print(f"[AutoDetect] No pocket0 found. Fallback used.")
+        return (0.0,0.0,0.0), (20.0,20.0,20.0)
+
+    coords = []
+    with open(pocket0, "r") as f:
+        for line in f:
+            if line.startswith(("ATOM", "HETATM")):
+                x = float(line[30:38])
+                y = float(line[38:46])
+                z = float(line[46:54])
+                coords.append([x, y, z])
+
+    if not coords:
+        print("[AutoDetect] pocket0 empty. Fallback used.")
+        return (0.0,0.0,0.0), (20.0,20.0,20.0)
+
+    arr = np.array(coords)
+    min_xyz = arr.min(axis=0)  # [minx, miny, minz]
+    max_xyz = arr.max(axis=0)  # [maxx, maxy, maxz]
+    center = tuple((min_xyz + max_xyz)/2.0)
+    size   = tuple(max_xyz - min_xyz)
+    print(f"[AutoDetect] center={center}, size={size}")
+    return center, size
 
 ###############################################################################
-# 5. Docking
+# 5. Determine Docking Box
+###############################################################################
+
+def get_docking_box(row, protein_pdb,
+                    fallback_center=(0.0,0.0,0.0),
+                    fallback_size=(20.0,20.0,20.0)):
+    """
+    If 'Docking Site Center' and 'Docking Site Size' are non-empty,
+    parse them. Otherwise call autodetect_pocket or fallback.
+    """
+    center_str = row.get("Docking Site Center", "") or ""
+    size_str   = row.get("Docking Site Size", "") or ""
+
+    if center_str.strip() and size_str.strip():
+        # The user entered something like "10, 10, 10"
+        try:
+            cx, cy, cz = [float(x.strip()) for x in center_str.split(",")]
+            sx, sy, sz = [float(x.strip()) for x in size_str.split(",")]
+            return (cx, cy, cz), (sx, sy, sz)
+        except ValueError:
+            print("[Warning] parse error for center/size. Using fallback.")
+            return fallback_center, fallback_size
+    else:
+        # auto-detect
+        center, size = autodetect_pocket(protein_pdb)
+        return center, size
+
+###############################################################################
+# 6. Docking with AutoDock Vina
 ###############################################################################
 
 def perform_docking(vina_exec, protein_pdbqt, ligand_pdbqt, output_dir, center, size):
-    """
-    Run AutoDock Vina with the specified bounding box (center, size).
-    """
     out_pdbqt = os.path.join(output_dir, f"{os.path.basename(protein_pdbqt)}_docked.pdbqt")
     log_file = os.path.join(output_dir, f"{os.path.basename(protein_pdbqt)}_docking.log")
 
@@ -197,85 +193,91 @@ def perform_docking(vina_exec, protein_pdbqt, ligand_pdbqt, output_dir, center, 
         "--log", log_file
     ]
     print(f"[Docking] Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(f"[Docking] Failed: {result.stderr}")
+    subprocess.run(cmd, check=True)
     print("[Docking] Completed successfully!")
 
-
 ###############################################################################
-# 6. Possibly parse experiment_id from file
+# 7. Main
 ###############################################################################
 
-def get_experiment_id(experiment_id):
-    """
-    If experiment_id is a path, read from file. Otherwise parse as int directly.
-    """
-    if os.path.isfile(experiment_id):
-        with open(experiment_id, "r") as f:
-            return int(f.read().strip())
-    return int(experiment_id)
-
-
-###############################################################################
-# 7. Main: bring it all together
-###############################################################################
+def parse_experiment_id(exp_id):
+    if os.path.isfile(exp_id):
+        with open(exp_id, "r") as f:
+            return f.read().strip()
+    return exp_id
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Automatic ADHD drug discovery pipeline")
-    parser.add_argument("--db_connection_string", required=True,
-                        help="SQLAlchemy-style DB URI (e.g. postgresql+psycopg2://user:pw@host/db)")
-    parser.add_argument("--experiment_id", required=True,
-                        help="Experiment ID integer or file containing the ID")
-    parser.add_argument("--ligand_cid", required=True,
-                        help="PubChem CID for the ligand to dock")
-    parser.add_argument("--vina_executable", default="vina",
-                        help="Path to the 'vina' executable")
-    parser.add_argument("--output_dir", default="docking_results",
-                        help="Directory to store output PDB/PDBQT files")
+    parser = argparse.ArgumentParser(description="Pipeline using Open Babel for ligand/protein prep & Vina for docking.")
+    parser.add_argument("--db_connection_string", required=True)
+    parser.add_argument("--experiment_id", required=True)
+    parser.add_argument("--ligand_cid", required=True)
+    parser.add_argument("--vina_executable", default="vina")
+    parser.add_argument("--output_dir", default="docking_results")
     parser.add_argument("--docking_params", required=False,
-                        help="CSV with 'Protein','Docking Site Center','Docking Site Size'. If omitted, use fallback box.")
+                        help="Path to a CSV file with docking parameters.")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # Convert experiment_id if it's a file
-    exp_id = get_experiment_id(args.experiment_id)
+    # 1) Convert experiment_id if file
+    exp_id = parse_experiment_id(args.experiment_id)
 
-    try:
-        # 1) Fetch therapeutic targets: disease_gene_id + uniprot_id
-        targets_df = fetch_therapeutic_targets(args.db_connection_string, exp_id)
-        if targets_df.empty:
-            raise RuntimeError("No therapeutic targets found for this experiment.")
+    # 2) Fetch targets
+    targets = fetch_therapeutic_targets(args.db_connection_string, exp_id)
+    if targets.empty:
+        raise RuntimeError("No therapeutic targets found for this experiment.")
 
-        # 2) For each target, if uniprot_id is missing, do Ensembl → UniProt → canonical pick
-        for idx, row in targets_df.iterrows():
-            if not row["uniprot_id"] or pd.isna(row["uniprot_id"]):
-                ensembl_id = row["disease_gene_id"]
-                possible_uniprots = fetch_uniprot_ids_from_ensembl(ensembl_id)
-                chosen_uniprot = select_canonical_uniprot(possible_uniprots)
-                targets_df.at[idx, "uniprot_id"] = chosen_uniprot  # store in memory
-                print(f"[Auto] Resolved {ensembl_id} → {chosen_uniprot}")
+    # 3) Prepare ligand with openbabel
+    ligand_sdf   = os.path.join(args.output_dir, "ligand.sdf")
+    ligand_pdbqt = os.path.join(args.output_dir, "ligand.pdbqt")
+    download_ligand(args.ligand_cid, ligand_sdf)
+    prepare_ligand_with_openbabel(ligand_sdf, ligand_pdbqt)
 
-        # 3) For each uniprot, fetch PDB IDs, pick first one automatically
-        #    (or you could store them all and loop further)
-        all_pdbs = []
-        for idx, row in targets_df.iterrows():
-            uni_id = row["uniprot_id"]
-            if not uni_id or pd.isna(uni_id):
-                print(f"[Warning] Could not resolve UniProt for row:\n{row}")
-                continue
-            pdb_list = fetch_pdb_ids_for_uniprot(uni_id)
-            if pdb_list:
-                chosen_pdb = pdb_list[0]
-                all_pdbs.append(chosen_pdb)
-                print(f"[Auto] {uni_id} → picking PDB {chosen_pdb}")
+    # 4) Read docking parameters if provided
+    if args.docking_params and os.path.exists(args.docking_params):
+        df_params = pd.read_csv(args.docking_params)
+    else:
+        df_params = None
+
+    # 5) For each target: fetch protein, prepare, auto-detect or parse box, run docking
+    for idx, row in targets.iterrows():
+        uniprot_id = row["uniprot_id"]
+        gene_id    = row["disease_gene_id"]
+
+        if not uniprot_id or pd.isna(uniprot_id):
+            print(f"[Warning] Missing UniProt ID for gene_id={gene_id}, skipping.")
+            continue
+
+        protein_pdb    = os.path.join(args.output_dir, f"{uniprot_id}.pdb")
+        protein_pdbqt  = os.path.join(args.output_dir, f"{uniprot_id}.pdbqt")
+
+        # fetch from alphafold
+        fetch_alphafold_pdb(uniprot_id, protein_pdb)
+
+        # prepare
+        prepare_protein_with_openbabel(protein_pdb, protein_pdbqt)
+
+        # parse docking box from CSV or autodetect
+        if df_params is not None:
+            match = df_params[df_params["disease_gene_id"] == gene_id]
+            if not match.empty:
+                row_params = match.iloc[0]
+                center, size = get_docking_box(row_params, protein_pdb)
             else:
-                print(f"[Warning] No PDBs found for {uni_id}")
+                # fallback or autodetect
+                center, size = autodetect_pocket(protein_pdb)
+        else:
+            # no CSV at all => autodetect
+            center, size = autodetect_pocket(protein_pdb)
 
-        if not all_pdbs:
-            raise RuntimeError("No PDB IDs resolved for any targets.")
+        # docking
+        perform_docking(
+            vina_exec=args.vina_executable,
+            protein_pdbqt=protein_pdbqt,
+            ligand_pdbqt=ligand_pdbqt,
+            output_dir=args.output_dir,
+            center=center,
+            size=size
+        )
 
-        # 4) Download and prepare the ligand
-        ligand_sdf = os.path.join(args.output_dir, "ligand.sdf")
-        ligand_pdbqt = os.path.jo
+    print("[Pipeline] Molecular docking completed successfully.")
