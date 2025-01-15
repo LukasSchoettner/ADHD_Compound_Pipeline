@@ -135,6 +135,7 @@ def main():
                     f"--ligand_cid={config['pipeline']['default_cid']}",
                     f"--experiment_id={experiment_id}",
                     f"--docking_params={docking_params_csv}"
+                    f"--output_dir={config['paths']['results']}"
                 ]
                 run_nextflow_workflow("workflow2.nf", params)
 
