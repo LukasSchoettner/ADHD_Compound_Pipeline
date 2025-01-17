@@ -7,16 +7,17 @@ import pandas as pd
 
 def create_therapeutic_targets_table(cursor):
     """
-    Create the therapeutic_targets table if it doesn't exist, now including uniprot_id.
+    Create the therapeutic_targets table if it doesn't exist, now including uniprot_id and deg_id.
     """
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS therapeutic_targets (
             target_id SERIAL PRIMARY KEY,
             experiment_id INT NOT NULL REFERENCES experiment(experiment_id) ON DELETE CASCADE,
             disease_gene_id TEXT NOT NULL REFERENCES disease_genes(disease_gene_id) ON DELETE CASCADE,
+            deg_id INT NOT NULL REFERENCES degs(deg_id) ON DELETE CASCADE,  -- Add deg_id as a foreign key
             uniprot_id VARCHAR(20),  -- store UniProt ID here
             deg_name VARCHAR(255),
-            UNIQUE (experiment_id, disease_gene_id)
+            UNIQUE (experiment_id, disease_gene_id, deg_id)  -- Prevent duplicate entries for the same deg_id
         );
     """)
 
@@ -24,7 +25,7 @@ def create_therapeutic_targets_table(cursor):
 def fetch_and_save_therapeutic_targets(db_connection_string, experiment_id):
     """
     Fetch matching DEGs and disease genes (plus aliases) for the given experiment ID,
-    and store them in the therapeutic_targets table with deg_name and uniprot_id.
+    and store them in the therapeutic_targets table with deg_name, deg_id, and uniprot_id.
 
     Args:
         db_connection_string (str): Database connection string.
@@ -37,12 +38,13 @@ def fetch_and_save_therapeutic_targets(db_connection_string, experiment_id):
                 create_therapeutic_targets_table(cursor)
 
                 # 2. Fetch matches between DEGs and disease_genes (or via gene_aliases).
-                #    Include uniprot_id from disease_genes in the SELECT.
+                #    Include deg_id and uniprot_id in the SELECT.
                 query = """
                     SELECT DISTINCT
                         dg.disease_gene_id,
                         dg.uniprot_id,
-                        degs.gene_name AS deg_name
+                        degs.gene_name AS deg_name,
+                        degs.deg_id
                     FROM degs
                     INNER JOIN gene_aliases ga
                         ON degs.gene_name = ga.alias
@@ -55,7 +57,8 @@ def fetch_and_save_therapeutic_targets(db_connection_string, experiment_id):
                     SELECT DISTINCT
                         dg.disease_gene_id,
                         dg.uniprot_id,
-                        degs.gene_name AS deg_name
+                        degs.gene_name AS deg_name,
+                        degs.deg_id
                     FROM degs
                     INNER JOIN disease_genes dg
                         ON degs.gene_name = dg.gene_name
@@ -68,12 +71,13 @@ def fetch_and_save_therapeutic_targets(db_connection_string, experiment_id):
                     disease_gene_id = row['disease_gene_id']
                     uniprot_id = row['uniprot_id']
                     deg_name = row['deg_name']
+                    deg_id = row['deg_id']
 
                     cursor.execute("""
-                        INSERT INTO therapeutic_targets (experiment_id, disease_gene_id, uniprot_id, deg_name)
-                        VALUES (%s, %s, %s, %s)
-                        ON CONFLICT (experiment_id, disease_gene_id) DO NOTHING;
-                    """, (experiment_id, disease_gene_id, uniprot_id, deg_name))
+                        INSERT INTO therapeutic_targets (experiment_id, disease_gene_id, uniprot_id, deg_name, deg_id)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (experiment_id, disease_gene_id, deg_id) DO NOTHING;
+                    """, (experiment_id, disease_gene_id, uniprot_id, deg_name, deg_id))
 
             conn.commit()
 

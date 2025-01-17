@@ -34,3 +34,23 @@ process molecular_docking {
     echo "Docking completed." > docking_done.txt
     """
 }
+
+process molecular_dynamics {
+  input:
+    val db_connection
+    val experiment_id
+    val input_structure
+
+  """
+  python molecular_dynamics.py \
+    --db_connection_string $db_connection \
+    --experiment_id $experiment_id \
+    --input_structure $input_structure \
+    --simulation_time 100 \
+    --temperature 310 \
+    --pressure 1.0 \
+    --solvent_type water \
+    --output_dir md_results
+  """
+}
+

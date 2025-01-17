@@ -54,25 +54,46 @@ def display_docking_input(therapeutic_targets):
     Display input fields for docking site parameters for each therapeutic target.
     Saves them to a CSV if the user clicks "Save Docking Parameters."
     """
-    therapeutic_targets["Docking Site Center"] = ""
-    therapeutic_targets["Docking Site Size"] = ""
+    # Create columns for auto_detect, center, size
+    therapeutic_targets["auto_detect"] = True  # default True
+    therapeutic_targets["center"] = ""
+    therapeutic_targets["size"] = ""
 
     for idx, row in therapeutic_targets.iterrows():
         st.write(f"Gene: {row['gene_name']}, Disease Gene ID: {row['disease_gene_id']}")
+
+        # Let user pick auto or manual
         use_auto = st.checkbox(f"Auto-detect docking site for {row['disease_gene_id']}",
                                value=True, key=f"auto_{idx}")
+        therapeutic_targets.at[idx, "auto_detect"] = use_auto
+
         if not use_auto:
-            center = st.text_input(f"Center (x, y, z) for {row['disease_gene_id']}",
-                                   value="10, 10, 10", key=f"center_{idx}")
-            size = st.text_input(f"Size (x, y, z) for {row['disease_gene_id']}",
-                                 value="20, 20, 20", key=f"size_{idx}")
-            therapeutic_targets.at[idx, "Docking Site Center"] = center
-            therapeutic_targets.at[idx, "Docking Site Size"] = size
+            center = st.text_input(
+                f"Center (x, y, z) for {row['disease_gene_id']}",
+                value="10, 10, 10",
+                key=f"center_{idx}"
+            )
+            size = st.text_input(
+                f"Size (x, y, z) for {row['disease_gene_id']}",
+                value="20, 20, 20",
+                key=f"size_{idx}"
+            )
+            therapeutic_targets.at[idx, "center"] = center
+            therapeutic_targets.at[idx, "size"] = size
 
     if st.button("Save Docking Parameters"):
         docking_params_path = "results/docking_parameters.csv"
-        therapeutic_targets.to_csv(docking_params_path, index=False)
+        # Only write needed columns
+        # or rename them to consistent naming in your CSV
+        therapeutic_targets[[
+            "disease_gene_id",
+            "gene_name",
+            "auto_detect",
+            "center",
+            "size"
+        ]].to_csv(docking_params_path, index=False)
         st.success("Docking parameters saved. Ready for molecular docking.")
+
 
 def main():
     # 1. Load config
@@ -134,7 +155,7 @@ def main():
                     f"--db_connection_string={config['database']['connection_string']}",
                     f"--ligand_cid={config['pipeline']['default_cid']}",
                     f"--experiment_id={experiment_id}",
-                    f"--docking_params={docking_params_csv}"
+                    f"--docking_params={docking_params_csv}",
                     f"--output_dir={config['paths']['results']}"
                 ]
                 run_nextflow_workflow("workflow2.nf", params)
