@@ -51,9 +51,9 @@ def fetch_and_save_therapeutic_targets(db_connection_string, experiment_id):
                     INNER JOIN disease_genes dg
                         ON ga.disease_gene_id = dg.disease_gene_id
                     WHERE degs.experiment_id = %s
-
+                
                     UNION
-
+                
                     SELECT DISTINCT
                         dg.disease_gene_id,
                         dg.uniprot_id,
@@ -64,6 +64,7 @@ def fetch_and_save_therapeutic_targets(db_connection_string, experiment_id):
                         ON degs.gene_name = dg.gene_name
                     WHERE degs.experiment_id = %s;
                 """
+
                 matched_genes = pd.read_sql_query(query, conn, params=(experiment_id, experiment_id))
 
                 # 3. Insert the matched genes into therapeutic_targets

@@ -49,7 +49,7 @@ def run_nextflow_workflow(workflow_file, params):
         st.error(f"An error occurred: {e}")
         return False
 
-def display_docking_input(therapeutic_targets):
+def display_docking_input(therapeutic_targets, docking_parameter_path):
     """
     Display input fields for docking site parameters for each therapeutic target.
     Saves them to a CSV if the user clicks "Save Docking Parameters."
@@ -82,7 +82,6 @@ def display_docking_input(therapeutic_targets):
             therapeutic_targets.at[idx, "size"] = size
 
     if st.button("Save Docking Parameters"):
-        docking_params_path = "results/docking_parameters.csv"
         # Only write needed columns
         # or rename them to consistent naming in your CSV
         therapeutic_targets[[
@@ -91,7 +90,7 @@ def display_docking_input(therapeutic_targets):
             "auto_detect",
             "center",
             "size"
-        ]].to_csv(docking_params_path, index=False)
+        ]].to_csv(docking_parameter_path, index=False)
         st.success("Docking parameters saved. Ready for molecular docking.")
 
 
@@ -100,18 +99,28 @@ def main():
     with open("config.yaml", "r") as f:
         config = yaml.safe_load(f)
 
+    results_path = config["paths"]["results"]
+    data_path = config["paths"]["data"]
+    experiment_id_path = os.path.join(data_path, "experiment_id.txt")
+    docking_parameter_path = os.path.join(config["paths"]["data"], "docking_parameters.csv")
+    db_connection_string = config['database']['connection_string']
+
     st.title("ADHD Compound Pipeline")
 
     # 2. Basic pipeline inputs
-    geo_id = st.text_input("GEO ID:", value=config["pipeline"]["default_geo_id"])
     description = st.text_input("Description:", value=config["pipeline"]["default_description"])
+    geo_id = st.text_input("GEO ID:", value=config["pipeline"]["default_geo_id"])
+    control_samples_str = st.text_input("Control samples (comma-separated):", value="GSM2286316,GSM2286317")
+    compound_samples_str = st.text_input("Compound samples (comma-separated):", value="GSM2286238,GSM2286239")
     compound_name = st.text_input("Natural Compound (Name):", value=config["pipeline"]["default_compound"])
+    ligand_cid = st.text_input("Compound ID (PubChem):",value=config['pipeline']['default_cid'])
+    adj_p = st.text_input("Adjusted P-Value for DEG analysis:", value=config['pipeline']['adj_p'])
+    raw_p = st.text_input("Raw P-Value for DEG analysis:", value=config['pipeline']['raw_p'])
+    log_fc_up = st.text_input("Log_FC upper minimum for DEG analysis (up-regulation, aka log_fc > x)", value=config['pipeline']['log_fc_up'])
+    log_fc_down = st.text_input("Log_FC lower minimum for DEG analysis (down-regulation, aka log_fc < x)", value=config['pipeline']['log_fc_down'])
 
     # 3. Fields for Control and Compound samples
-    control_samples_str = st.text_input("Control samples (comma-separated):",
-                                        value="GSM2286316,GSM2286317")
-    compound_samples_str = st.text_input("Compound samples (comma-separated):",
-                                         value="GSM2286238,GSM2286239")
+
 
     # Merge them for the Nextflow pipeline
     control_list = [s.strip() for s in control_samples_str.split(",") if s.strip()]
@@ -129,7 +138,11 @@ def main():
             f"--groups={groups_merged}",
             f"--compound_name={compound_name}",
             f"--description={description}",
-            f"--db_connection_string={config['database']['connection_string']}"
+            f"--db_connection_string={db_connection_string}",
+            f"--adj_p={adj_p}",
+            f"--raw_p={raw_p}",
+            f"--log_fc_up={log_fc_up}",
+            f"--log_fc_down={log_fc_down}"
         ]
         success = run_nextflow_workflow("workflow1.nf", params)
         if success:
@@ -137,26 +150,24 @@ def main():
 
     # 5. If pre-docking completed, show docking input
     if st.session_state.get("pre_docking_completed", False):
-        experiment_id_path = "results/experiment_id.txt"
         if os.path.exists(experiment_id_path):
             with open(experiment_id_path, "r") as f:
                 experiment_id = int(f.read().strip())
 
             # Fetch the targets from DB, let user specify docking boxes
-            therapeutic_targets = fetch_therapeutic_targets(config["database"]["connection_string"],
-                                                            experiment_id)
-            display_docking_input(therapeutic_targets)
+            therapeutic_targets = fetch_therapeutic_targets(db_connection_string, experiment_id)
+            display_docking_input(therapeutic_targets, docking_parameter_path)
 
             # If docking params exist, user can run "Run Molecular Docking"
-            docking_params_csv = "results/docking_parameters.csv"
-            if os.path.exists(docking_params_csv) and st.button("Run Molecular Docking"):
+
+            if os.path.exists(docking_parameter_path) and st.button("Run Molecular Docking"):
                 # 6. Call workflow2.nf, passing the CSV file path
                 params = [
-                    f"--db_connection_string={config['database']['connection_string']}",
-                    f"--ligand_cid={config['pipeline']['default_cid']}",
+                    f"--db_connection_string={db_connection_string}",
+                    f"--ligand_cid={ligand_cid}",
                     f"--experiment_id={experiment_id}",
-                    f"--docking_params={docking_params_csv}",
-                    f"--output_dir={config['paths']['results']}"
+                    f"--docking_params={docking_parameter_path}",
+                    f"--output_dir={results_path}"
                 ]
                 run_nextflow_workflow("workflow2.nf", params)
 

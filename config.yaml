@@ -11,12 +11,14 @@ pipeline:
   default_description: "Gastrodin experiment for ADHD pipeline testing"
   default_docking_center: "0, 0, 0"
   default_docking_size: "20, 20, 20"
+  raw_p: 0.05
+  adj_p: 0.05
+  log_fc_up: 1
+  log_fc_down: -1
 
 # File paths (if needed)
 paths:
-  logs: "./logs/"
+  logs: "/home/scmbag/Desktop/ADHD_Compound_Pipeline/logs/"
   results: "/home/scmbag/Desktop/ADHD_Compound_Pipeline/results"
+  data: "/home/scmbag/Desktop/ADHD_Compound_Pipeline/data"
   mgltools: "/home/scmbag/Desktop/ADHD_Compound_Pipeline/tools/MGLTools-1.5.7/MGLToolsPckgs/AutoDockTools/Utilities24"
-
-#pythonsh_path = "/home/scmbag/Desktop/ADHD_Compound_Pipeline/tools/MGLTools-1.5.7/bin/pythonsh"  # Update this path
-#prepare_receptor_script = "/home/scmbag/Desktop/ADHD_Compound_Pipeline/tools/MGLTools-1.5.7/MGLToolsPckgs/AutoDockTools/Utilities24/prepare_receptor.py"  # Update this path

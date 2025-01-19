@@ -1,14 +1,27 @@
 nextflow.enable.dsl = 2
-//stop hereeeeeeeeee
+
 workflow {
     // Create an experiment and capture its ID
-    create_experiment(params.geo_id, params.compound_name, params.description)
+    create_experiment(params.geo_id,
+                      params.compound_name,
+                      params.description,
+                      params.raw_p,
+                      params.adj_p,
+                      params.log_fc_up,
+                      params.log_fc_down)
 
     // Channel to pass the experiment ID
-    def experiment_id_channel = Channel.fromPath("results/experiment_id.txt")
+    def experiment_id_channel = Channel.fromPath("${params.data_dir}/experiment_id.txt")
 
     // Run analyze_geo and wait for its completion
-    def geo_analysis_done = analyze_geo(params.geo_id, params.samples, params.groups, experiment_id_channel)
+    def geo_analysis_done = analyze_geo(params.geo_id,
+                                        params.samples,
+                                        params.groups,
+                                        experiment_id_channel,
+                                        params.raw_p,
+                                        params.adj_p,
+                                        params.log_fc_up,
+                                        params.log_fc_down)
 
     match_deg_and_disease_genes(experiment_id_channel, geo_analysis_done)
 
@@ -24,11 +37,15 @@ workflow {
 
 
 process create_experiment {
-    publishDir 'results'
+    publishDir 'data'
     input:
     val geo_id
     val compound_name
     val description
+    val raw_p
+    val adj_p
+    val log_fc_up
+    val log_fc_down
 
     output:
     path "experiment_id.txt"
@@ -41,7 +58,7 @@ process create_experiment {
 
     # Run the command
     psql ${params.db_connection_string} -t -A -c \\
-    "INSERT INTO experiment (geo_id, compound, description, status) VALUES ('$geo_id', '$compound_name', '$description', 'Running') RETURNING experiment_id;" | grep -Eo '^[0-9]+' > experiment_id.txt
+    "INSERT INTO experiment (geo_id, compound, raw_p, adj_p, log_fc_up, log_fc_down, description, status) VALUES ('$geo_id', '$compound_name', '$raw_p', '$adj_p', '$log_fc_up', '$log_fc_down', '$description', 'Running') RETURNING experiment_id;" | grep -Eo '^[0-9]+' > experiment_id.txt
     """
 
     // Pass the value via the output file
@@ -57,13 +74,25 @@ process analyze_geo {
     val samples
     val groups
     val experiment_id
+    val raw_p
+    val adj_p
+    val log_fc_up
+    val log_fc_down
 
     output:
     path "analyze_geo_done.txt"
 
     script:
     """
-    Rscript /home/scmbag/Desktop/ADHD_Compound_Pipeline/scripts/analyze_geo.R --geo_id $geo_id --samples "$samples" --experiment_id $experiment_id --groups $groups --db_connection_string "${params.db_connection_string}"
+    Rscript ${params.scripts_dir}/analyze_geo.R \\
+        --geo_id $geo_id --samples "$samples" \\
+        --experiment_id $experiment_id \\
+        --groups $groups \\
+        --db_connection_string "${params.db_connection_string}" \\
+        --raw_p $raw_p \\
+        --adj_p $adj_p \\
+        --log_fc_up $log_fc_up \\
+        --log_fc_down $log_fc_down
     echo "Analyze GEO completed." > analyze_geo_done.txt
     """
 }
@@ -76,7 +105,9 @@ process match_deg_and_disease_genes {
 
     script:
     """
-    python3 /home/scmbag/Desktop/ADHD_Compound_Pipeline/scripts/match_deg_and_disease_genes.py --experiment_id $experiment_id --db_connection_string "${params.db_connection_string}"
+    python3 ${params.scripts_dir}/match_deg_and_disease_genes.py \\
+        --experiment_id $experiment_id \\
+        --db_connection_string "${params.db_connection_string}"
     """
 
 }
@@ -93,7 +124,10 @@ process build_ppi_network {
 
     script:
     """
-    python3 /home/scmbag/Desktop/ADHD_Compound_Pipeline/scripts/build_ppi_network.py --experiment_id $experiment_id --db_connection_string "${params.db_connection_string}"
+    python3 ${params.scripts_dir}/build_ppi_network.py \\
+        --experiment_id $experiment_id \\
+        --db_connection_string "${params.db_connection_string}" \\
+        --base_dir "${params.project_dir}"
     echo "PPI network completed." > ppi_done.txt
     """
 }
@@ -108,7 +142,10 @@ process perform_pathway_enrichment {
 
     script:
     """
-    python3 /home/scmbag/Desktop/ADHD_Compound_Pipeline/scripts/pathway_enrichment.py --experiment_id $experiment_id --db_connection_string $db_connection_string
+    python3 ${params.scripts_dir}/pathway_enrichment.py \\
+        --experiment_id $experiment_id \\
+        --db_connection_string $db_connection_string \\
+        --base_dir "${params.project_dir}"
     """
 }
 

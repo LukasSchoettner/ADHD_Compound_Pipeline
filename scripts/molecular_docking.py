@@ -5,6 +5,8 @@ import argparse
 import pandas as pd
 import traceback
 import re
+
+import yaml
 from sqlalchemy import create_engine, text
 
 from Bio.PDB import PDBParser, PDBIO
@@ -516,7 +518,7 @@ def parse_docked_pdbqt(pdbqt_file_path: Path,
 # 9. Main
 ###############################################################################
 
-def parse_experiment_id(exp_id: str):
+def parse_experiment_id(project_dir, exp_id: str):
     """
     If exp_id is a file, read its content as the real experiment ID.
     Otherwise just return it.
@@ -544,6 +546,7 @@ def fetch_structure_fallback(uniprot_id: str, output_pdb: Path):
     return False
 
 def main():
+
     parser = argparse.ArgumentParser(description="ADHD pipeline fallback & docking.")
     parser.add_argument("--db_connection_string", required=True)
     parser.add_argument("--experiment_id", required=True)
@@ -553,13 +556,17 @@ def main():
     parser.add_argument("--docking_params", required=False,
                         help="Path to a CSV file with docking parameters.")
     parser.add_argument("--visualize", default=True)
+    parser.add_argument("--project_dir", required=True)
     args = parser.parse_args()
+
+    with open(args.project_dir + "/config.yaml", "r") as f:
+        config = yaml.safe_load(f)
 
     # Convert output_dir -> Path, then append experiment_id
     experiment_dir = Path(args.output_dir) / str(args.experiment_id)
     experiment_dir.mkdir(parents=True, exist_ok=True)
 
-    exp_id = parse_experiment_id(args.experiment_id)
+    exp_id = parse_experiment_id(args.project_dir, args.experiment_id)
     targets = fetch_therapeutic_targets(args.db_connection_string, exp_id)
     if targets.empty:
         raise RuntimeError("No therapeutic targets found for this experiment.")
