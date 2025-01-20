@@ -135,33 +135,51 @@ def insert_md_record(db_connection_string, record):
         engine.dispose()
 
 
-def process_md_simulation(row, docking_dir, output_dir, db_connection_string):
+def process_md_simulation(row, docking_dir, output_dir, db_connection_string, experiment_id):
     """
     Process a single MD simulation entry.
     """
+
+    # -------------------------------------------------------------------------
+    # 1) EXTRACT COLUMNS FROM THE ROW
+    # Ensure your CSV or DB result has uniprot_id, docking_id, gene_name, etc.
+    # -------------------------------------------------------------------------
     docking_id = row["docking_id"]
+    uniprot_id = row["uniprot_id"]  # <-- Make sure your CSV / DB has this column
     ligand_cid = row["ligand_cid"]
     deg_id = row["deg_id"]
     binding_energy = row["binding_energy"]
     gene_name = row["gene_name"]
+
     sim_time = row.get("generic_sim_time", 100)
     temp = row.get("generic_temp", 300)
     pressure = row.get("generic_pressure", 1)
     solvent = row.get("generic_solvent", "water")
 
-    # Paths
-    protein_pdb = Path(docking_dir) / f"{docking_id}_protein_clean.pdb"
-    ligand_pdb = Path(docking_dir) / f"{docking_id}_docked.pdb"
-    output_pdb = Path(output_dir) / f"{docking_id}_complex.pdb"
-    sim_output_dir = Path(output_dir) / f"docking_{gene_name}_{docking_id}"
+    # -------------------------------------------------------------------------
+    # 2) BUILD THE PATHS BASED ON uniprot_id (or docking_id if that matches)
+    # -------------------------------------------------------------------------
+    # Example: results/molecular_docking/<experiment_id>/<uniprot_id>_clean.pdb
+    # Make sure these files exist or your script will fail.
+    protein_pdb = Path(docking_dir) / str(experiment_id) / f"{uniprot_id}_clean.pdb"
+    ligand_pdb  = Path(docking_dir) / str(experiment_id) / f"{uniprot_id}_docked.pdb"
 
-    # Prepare protein-ligand complex
+    # The combined output PDB:
+    output_pdb  = Path(docking_dir) / str(experiment_id) / f"{uniprot_id}_complex.pdb"
+
+    # The final MD results folder.  E.g.:
+    # results/molecular_dynamics/<experiment_id>/docking_<gene_name>_<docking_id>
+    sim_output_dir = Path(output_dir) / "molecular_dynamics" / str(experiment_id) / f"docking_{gene_name}/{docking_id}"
+
+    # -------------------------------------------------------------------------
+    # 3) COMBINE AND RUN MD
+    # -------------------------------------------------------------------------
     combine_protein_ligand(protein_pdb, ligand_pdb, output_pdb)
-
-    # Run MD simulation
     perform_md_simulation_with_gromacs(output_pdb, sim_output_dir, sim_time, temp, pressure)
 
-    # Insert results into the database
+    # -------------------------------------------------------------------------
+    # 4) INSERT RESULTS INTO DB
+    # -------------------------------------------------------------------------
     record = {
         "docking_id": docking_id,
         "ligand_cid": ligand_cid,
@@ -177,26 +195,42 @@ def process_md_simulation(row, docking_dir, output_dir, db_connection_string):
     insert_md_record(db_connection_string, record)
 
 
+def get_experiment_id(experiment_id):
+    """
+    Parse experiment_id from file if it is a file path.
+    """
+    if os.path.isfile(experiment_id):
+        with open(experiment_id, "r") as f:
+            return int(f.read().strip())
+    return int(experiment_id)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Perform MD simulations using parameters from md_parameters.csv")
     parser.add_argument("--db_connection_string", required=True, help="Database connection string (SQLAlchemy format).")
+    parser.add_argument("--experiment_id", required=True, help="ID or file containing experiment ID.")
     parser.add_argument("--md_param_file", required=True, help="Path to the MD parameters CSV file.")
-    parser.add_argument("--docking_dir", required=True, help="Directory containing docking results.")
     parser.add_argument("--output_dir", required=True, help="Directory to store MD results.")
     parser.add_argument("--num_workers", type=int, default=8, help="Number of parallel workers.")
     args = parser.parse_args()
 
-    # Load MD parameters
+    # 1. Load MD parameters
     md_params = parse_md_parameters(args.md_param_file)
+    docking_dir = os.path.join(args.output_dir, "molecular_docking")
+    experiment_id = get_experiment_id(args.experiment_id)
 
-    # Parallelize MD simulations
+    # 3. Create the tasks
     tasks = [
-        (row, args.docking_dir, args.output_dir, args.db_connection_string)
+        (row, docking_dir, args.output_dir, args.db_connection_string, experiment_id)
         for _, row in md_params.iterrows()
     ]
 
-    with ProcessPoolExecutor(max_workers=args.num_workers) as executor:
-        results = executor.map(lambda t: process_md_simulation(*t), tasks)
+    # ---------------------------------------------------------------------
+    # 4. For clarity, let's run them in a simple for-loop
+    #    (You can re-enable concurrency later if you want.)
+    # ---------------------------------------------------------------------
+    for t in tasks:
+        process_md_simulation(*t)
 
     print("[Pipeline] All simulations completed.")
 

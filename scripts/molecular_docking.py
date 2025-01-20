@@ -403,13 +403,13 @@ def insert_docking_results(db_connection_string: str, docking_results: list):
         with engine.begin() as conn:
             query = text("""
                 INSERT INTO docking_results (
-                    experiment_id, ligand_cid, deg_id, binding_energy,
+                    experiment_id, uniprot_id, ligand_cid, deg_id, binding_energy,
                     rmsd_lower_bound, rmsd_upper_bound, docking_pose_rank,
                     center_x, center_y, center_z,
                     size_x, size_y, size_z,
                     created_at, updated_at
                 ) VALUES (
-                    :experiment_id, :ligand_cid, :deg_id, :binding_energy,
+                    :experiment_id, :uniprot_id, :ligand_cid, :deg_id, :binding_energy,
                     :rmsd_lower_bound, :rmsd_upper_bound, :docking_pose_rank,
                     :center_x, :center_y, :center_z,
                     :size_x, :size_y, :size_z,
@@ -474,7 +474,8 @@ def parse_docked_pdbqt(pdbqt_file_path: Path,
                        deg_id: int,
                        ligand_cid: str,
                        center: tuple,
-                       size: tuple):
+                       size: tuple,
+                       uniprot_id: str):
     """
     Parse lines from the final .pdbqt that look like:
       REMARK VINA RESULT:   -5.3  0.000  0.000
@@ -510,6 +511,7 @@ def parse_docked_pdbqt(pdbqt_file_path: Path,
                 "size_x": size[0],
                 "size_y": size[1],
                 "size_z": size[2],
+                "uniprot_id": uniprot_id
             }
             results.append(result)
             docking_pose_rank += 1
@@ -616,7 +618,8 @@ def process_target(args):
             deg_id=row["deg_id"],
             ligand_cid=args.ligand_cid,
             center=center,
-            size=size
+            size=size,
+            uniprot_id=uniprot_id
         )
         insert_docking_results(args.db_connection_string, results)
 
