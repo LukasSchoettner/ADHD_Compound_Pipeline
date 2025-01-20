@@ -1,184 +1,205 @@
-#!/usr/bin/env python3
-
-"""
-Sample Molecular Dynamics script for ADHD pipeline.
-
-Usage example:
-  python molecular_dynamics.py \
-    --db_connection_string postgresql://user:pass@localhost/adhd_research \
-    --experiment_id 123 \
-    --input_structure results/ligand_protein_complex.pdb \
-    --simulation_time 100 \
-    --temperature 300 \
-    --pressure 1.0 \
-    --solvent_type "water" \
-    --output_dir results/md_results
-"""
-
 import os
 import argparse
-import subprocess  # if you want to call external MD tools
-import time
-from datetime import datetime
+import pandas as pd
+from pathlib import Path
+import subprocess
 import traceback
+from concurrent.futures import ProcessPoolExecutor
 from sqlalchemy import create_engine, text
 
-##############################################################################
-# 1. Placeholder: The actual MD simulation logic (replace with GROMACS/OpenMM)
-##############################################################################
 
-def perform_md_simulation(input_structure, simulation_time, temperature, pressure, solvent_type, output_dir):
+def parse_md_parameters(md_param_file):
     """
-    Run a molecular dynamics simulation (placeholder).
-    In a real scenario, you'd call GROMACS or OpenMM commands here.
-
-    Args:
-        input_structure (str): Path to the input structure file (protein-ligand complex).
-        simulation_time (int): Duration of the simulation in nanoseconds.
-        temperature (float): Temperature in Kelvin.
-        pressure (float): Pressure in bar (or atm).
-        solvent_type (str): E.g. "water", "implicit", etc.
-        output_dir (str): Where to store MD result files.
-
-    Returns:
-        str: Path to a placeholder MD simulation results file (e.g. a log).
+    Parse the md_parameters.csv file into a DataFrame.
     """
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir, exist_ok=True)
+    try:
+        df = pd.read_csv(md_param_file)
+        return df
+    except Exception as e:
+        print(f"[Error] Failed to parse MD parameters: {e}")
+        raise
 
-    # Typically you'd run something like:
-    #   subprocess.run(["gmx", "mdrun", ...]) or
-    #   run OpenMM python code for the simulation
-    #
-    # For demonstration, we just create a placeholder text file:
-    md_result_file = os.path.join(output_dir, "md_simulation.log")
-    with open(md_result_file, "w") as f:
-        f.write(f"Placeholder MD simulation for {input_structure}\n")
-        f.write(f"Simulation time: {simulation_time} ns\n")
-        f.write(f"Temperature: {temperature} K\n")
-        f.write(f"Pressure: {pressure}\n")
-        f.write(f"Solvent: {solvent_type}\n")
-        f.write("Simulating...\n")
-        time.sleep(2)  # pretend to "run" for 2 seconds
-        f.write("MD simulation complete.\n")
 
-    print(f"[MD] Completed simulation. Results at {md_result_file}")
-    return md_result_file
-
-##############################################################################
-# 2. Insert MD results into the database
-##############################################################################
-
-def insert_md_record(db_connection_string, experiment_id, compound_id,
-                     simulation_time, temperature, pressure, solvent_type,
-                     md_log_path, status="Completed", observed_effect=""):
+def combine_protein_ligand(protein_pdb, ligand_pdb, output_pdb):
     """
-    Insert a row into the molecular_dynamic table with the basic MD info.
+    Combine protein and ligand into a single PDB file for MD simulation.
+    """
+    with open(output_pdb, "w") as outfile:
+        with open(protein_pdb, "r") as f1:
+            outfile.write(f1.read())
+        with open(ligand_pdb, "r") as f2:
+            for line in f2:
+                if line.startswith(("ATOM", "HETATM")):
+                    outfile.write(line)
+    print(f"[MD] Combined protein and ligand into {output_pdb}")
 
-    Args:
-        db_connection_string (str): SQLAlchemy DB connection URI.
-        experiment_id (int or str): The experiment ID.
-        compound_id (str): The compound or ligand ID used in the simulation.
-        simulation_time (int): The simulation time in ns.
-        temperature (float)
-        pressure (float)
-        solvent_type (str)
-        md_log_path (str): Path to the MD log or result file.
-        status (str): e.g. "Completed", "Failed"
-        observed_effect (str): Any notable result from the MD simulation.
+
+def perform_md_simulation_with_gromacs(protein_ligand_pdb, output_dir, simulation_time, temperature, pressure):
+    """
+    Prepare and run MD simulation using GROMACS.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Step 1: Generate topology
+    cmd = [
+        "gmx", "pdb2gmx",
+        "-f", protein_ligand_pdb,
+        "-o", os.path.join(output_dir, "complex.gro"),
+        "-p", os.path.join(output_dir, "topol.top"),
+        "-ff", "amber99sb",
+        "-water", "tip3p"
+    ]
+    subprocess.run(cmd, check=True)
+
+    # Step 2: Define simulation box
+    cmd = [
+        "gmx", "editconf",
+        "-f", os.path.join(output_dir, "complex.gro"),
+        "-o", os.path.join(output_dir, "box.gro"),
+        "-c", "-d", "1.0", "-bt", "cubic"
+    ]
+    subprocess.run(cmd, check=True)
+
+    # Step 3: Solvate
+    cmd = [
+        "gmx", "solvate",
+        "-cp", os.path.join(output_dir, "box.gro"),
+        "-cs", "spc216.gro",
+        "-o", os.path.join(output_dir, "solvated.gro"),
+        "-p", os.path.join(output_dir, "topol.top")
+    ]
+    subprocess.run(cmd, check=True)
+
+    # Step 4: Add ions
+    cmd = [
+        "gmx", "grompp",
+        "-f", "ions.mdp",
+        "-c", os.path.join(output_dir, "solvated.gro"),
+        "-p", os.path.join(output_dir, "topol.top"),
+        "-o", os.path.join(output_dir, "ions.tpr")
+    ]
+    subprocess.run(cmd, check=True)
+
+    cmd = [
+        "gmx", "genion",
+        "-s", os.path.join(output_dir, "ions.tpr"),
+        "-o", os.path.join(output_dir, "solvated_ions.gro"),
+        "-p", os.path.join(output_dir, "topol.top"),
+        "-pname", "NA", "-nname", "CL", "-neutral"
+    ]
+    subprocess.run(cmd, check=True)
+
+    # Step 5: Energy minimization
+    cmd = [
+        "gmx", "grompp",
+        "-f", "minim.mdp",
+        "-c", os.path.join(output_dir, "solvated_ions.gro"),
+        "-p", os.path.join(output_dir, "topol.top"),
+        "-o", os.path.join(output_dir, "em.tpr")
+    ]
+    subprocess.run(cmd, check=True)
+
+    cmd = [
+        "gmx", "mdrun",
+        "-v", "-deffnm", os.path.join(output_dir, "em")
+    ]
+    subprocess.run(cmd, check=True)
+
+    print(f"[MD] Molecular dynamics simulation completed. Results in {output_dir}")
+
+
+def insert_md_record(db_connection_string, record):
+    """
+    Insert a row into the molecular_dynamic table with the MD simulation info.
     """
     engine = create_engine(db_connection_string)
     insert_sql = text("""
         INSERT INTO molecular_dynamic (
-            experiment_id,
-            observed_effect,
-            compound_id,
-            simulation_time,
-            temperature,
-            pressure,
-            solvent_type,
-            status
-            -- You can also store a reference to md_log_path if your schema has a column
+            docking_id, ligand_cid, deg_id, binding_energy, gene_name,
+            simulation_time, temperature, pressure, solvent_type, status
         )
         VALUES (
-            :experiment_id,
-            :observed_effect,
-            :compound_id,
-            :simulation_time,
-            :temperature,
-            :pressure,
-            :solvent_type,
-            :status
+            :docking_id, :ligand_cid, :deg_id, :binding_energy, :gene_name,
+            :simulation_time, :temperature, :pressure, :solvent_type, :status
         )
     """)
 
     try:
         with engine.begin() as conn:
-            conn.execute(insert_sql, {
-                "experiment_id": experiment_id,
-                "observed_effect": observed_effect,
-                "compound_id": compound_id,
-                "simulation_time": simulation_time,
-                "temperature": temperature,
-                "pressure": pressure,
-                "solvent_type": solvent_type,
-                "status": status
-            })
-        print("[DB] MD record inserted successfully.")
+            conn.execute(insert_sql, record)
+        print(f"[DB] Record inserted for docking_id={record['docking_id']}")
     except Exception as e:
         traceback.print_exc()
-        print(f"[DB] Insert into molecular_dynamic failed: {e}")
+        print(f"[DB] Failed to insert record for docking_id={record['docking_id']}")
     finally:
         engine.dispose()
 
-##############################################################################
-# 3. Main script for CLI usage
-##############################################################################
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Perform a placeholder Molecular Dynamics simulation.")
-    parser.add_argument("--db_connection_string", required=True,
-                        help="Database connection string (SQLAlchemy format).")
-    parser.add_argument("--experiment_id", required=True,
-                        help="Experiment ID to link the MD results.")
-    parser.add_argument("--compound_id", default="Gastrodin",
-                        help="Compound ID or name used in the MD simulation.")
-    parser.add_argument("--input_structure", default="results/docking_results/complex.pdb",
-                        help="Path to the input PDB structure (ligand + protein).")
-    parser.add_argument("--simulation_time", type=int, default=100,
-                        help="Simulation time in nanoseconds.")
-    parser.add_argument("--temperature", type=float, default=300.0,
-                        help="Temperature in Kelvin.")
-    parser.add_argument("--pressure", type=float, default=1.0,
-                        help="Pressure (in bar or atm).")
-    parser.add_argument("--solvent_type", default="water",
-                        help="Solvent type (e.g., water, implicit).")
-    parser.add_argument("--output_dir", default="md_results",
-                        help="Directory to store MD result files.")
+def process_md_simulation(row, docking_dir, output_dir, db_connection_string):
+    """
+    Process a single MD simulation entry.
+    """
+    docking_id = row["docking_id"]
+    ligand_cid = row["ligand_cid"]
+    deg_id = row["deg_id"]
+    binding_energy = row["binding_energy"]
+    gene_name = row["gene_name"]
+    sim_time = row.get("generic_sim_time", 100)
+    temp = row.get("generic_temp", 300)
+    pressure = row.get("generic_pressure", 1)
+    solvent = row.get("generic_solvent", "water")
+
+    # Paths
+    protein_pdb = Path(docking_dir) / f"{docking_id}_protein_clean.pdb"
+    ligand_pdb = Path(docking_dir) / f"{docking_id}_docked.pdb"
+    output_pdb = Path(output_dir) / f"{docking_id}_complex.pdb"
+    sim_output_dir = Path(output_dir) / f"docking_{gene_name}_{docking_id}"
+
+    # Prepare protein-ligand complex
+    combine_protein_ligand(protein_pdb, ligand_pdb, output_pdb)
+
+    # Run MD simulation
+    perform_md_simulation_with_gromacs(output_pdb, sim_output_dir, sim_time, temp, pressure)
+
+    # Insert results into the database
+    record = {
+        "docking_id": docking_id,
+        "ligand_cid": ligand_cid,
+        "deg_id": deg_id,
+        "binding_energy": binding_energy,
+        "gene_name": gene_name,
+        "simulation_time": sim_time,
+        "temperature": temp,
+        "pressure": pressure,
+        "solvent_type": solvent,
+        "status": "Completed"
+    }
+    insert_md_record(db_connection_string, record)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Perform MD simulations using parameters from md_parameters.csv")
+    parser.add_argument("--db_connection_string", required=True, help="Database connection string (SQLAlchemy format).")
+    parser.add_argument("--md_param_file", required=True, help="Path to the MD parameters CSV file.")
+    parser.add_argument("--docking_dir", required=True, help="Directory containing docking results.")
+    parser.add_argument("--output_dir", required=True, help="Directory to store MD results.")
+    parser.add_argument("--num_workers", type=int, default=8, help="Number of parallel workers.")
     args = parser.parse_args()
 
-    # 1) Perform MD simulation
-    md_log_path = perform_md_simulation(
-        input_structure=args.input_structure,
-        simulation_time=args.simulation_time,
-        temperature=args.temperature,
-        pressure=args.pressure,
-        solvent_type=args.solvent_type,
-        output_dir=args.output_dir
-    )
+    # Load MD parameters
+    md_params = parse_md_parameters(args.md_param_file)
 
-    # 2) Insert record into DB
-    insert_md_record(
-        db_connection_string=args.db_connection_string,
-        experiment_id=args.experiment_id,
-        compound_id=args.compound_id,
-        simulation_time=args.simulation_time,
-        temperature=args.temperature,
-        pressure=args.pressure,
-        solvent_type=args.solvent_type,
-        md_log_path=md_log_path,   # for reference if your schema has a column
-        observed_effect="",        # placeholder
-        status="Completed"
-    )
+    # Parallelize MD simulations
+    tasks = [
+        (row, args.docking_dir, args.output_dir, args.db_connection_string)
+        for _, row in md_params.iterrows()
+    ]
 
-    print("[Pipeline] Molecular dynamics simulation completed successfully.")
+    with ProcessPoolExecutor(max_workers=args.num_workers) as executor:
+        results = executor.map(lambda t: process_md_simulation(*t), tasks)
+
+    print("[Pipeline] All simulations completed.")
+
+
+if __name__ == "__main__":
+    main()

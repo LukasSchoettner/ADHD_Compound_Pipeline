@@ -26,6 +26,62 @@ def fetch_therapeutic_targets(db_connection_string, experiment_id):
         st.error(f"Error fetching therapeutic targets: {e}")
         return pd.DataFrame()
 
+def fetch_docking_results(db_connection_string, experiment_id, energy_cutoff):
+    """
+    Query the database to fetch docking results based on energy cutoff.
+    """
+    try:
+        engine = create_engine(db_connection_string)
+        query = f"""
+            SELECT dr.docking_id, dr.ligand_cid, dr.deg_id, dr.binding_energy, dg.gene_name
+            FROM docking_results dr
+            INNER JOIN degs dg ON dr.deg_id = dg.deg_id
+            WHERE dr.experiment_id = %(exp_id)s AND dr.binding_energy <= %(cutoff)s;
+        """
+        params_dict = {"exp_id": experiment_id, "cutoff": energy_cutoff}
+        results = pd.read_sql_query(query, con=engine, params=params_dict)
+        engine.dispose()
+        return results
+    except Exception as e:
+        st.error(f"Error fetching docking results: {e}")
+        return pd.DataFrame()
+
+
+def display_md_input(docking_results, md_param_path):
+    """
+    Display input fields for MD simulation parameters for each docking result.
+    """
+    docking_results["generic_sim_time"] = 100  # Default simulation time
+    docking_results["generic_temp"] = 300  # Default temperature
+    docking_results["generic_pressure"] = 1  # Default pressure
+    docking_results["generic_solvent"] = "water"  # Default solvent type
+
+    individual_params = {}
+
+    for idx, row in docking_results.iterrows():
+        st.write(f"Gene: {row['gene_name']}, Docking ID: {row['docking_id']}, Binding Energy: {row['binding_energy']}")
+
+        # Let user specify individual parameters (optional)
+        individual = st.checkbox(f"Set individual parameters for Docking ID {row['docking_id']}", key=f"indiv_{idx}")
+        if individual:
+            sim_time = st.number_input(f"Simulation Time (ps) for {row['docking_id']}", value=100, key=f"sim_time_{idx}")
+            temp = st.number_input(f"Temperature (K) for {row['docking_id']}", value=300, key=f"temp_{idx}")
+            pressure = st.number_input(f"Pressure (atm) for {row['docking_id']}", value=1, key=f"pressure_{idx}")
+            solvent = st.text_input(f"Solvent Type for {row['docking_id']}", value="water", key=f"solvent_{idx}")
+
+            individual_params[row['docking_id']] = {
+                "simulation_time": sim_time,
+                "temperature": temp,
+                "pressure": pressure,
+                "solvent": solvent
+            }
+
+    if st.button("Save MD Parameters"):
+        # Save both generic and individual parameters
+        docking_results["individual_params"] = docking_results["docking_id"].map(individual_params)
+        docking_results.to_csv(md_param_path, index=False)
+        st.success("MD parameters saved. Ready for MD simulation.")
+
 def run_nextflow_workflow(workflow_file, params):
     """
     Run a Nextflow workflow with the given parameters.
@@ -169,7 +225,38 @@ def main():
                     f"--docking_params={docking_parameter_path}",
                     f"--output_dir={results_path}"
                 ]
-                run_nextflow_workflow("workflow2.nf", params)
+                success2 = run_nextflow_workflow("workflow2.nf", params)
+                if success2:
+                    st.session_state["docking_completed"] = True
+
+    # Fetch docking results based on user-specified binding energy cutoff
+    if st.session_state.get("docking_completed", False):
+        st.subheader("Molecular Dynamics Simulation")
+
+        binding_energy_cutoff = st.number_input("Enter Binding Energy Cutoff:", value=-7.0, step=0.1)
+        if os.path.exists(experiment_id_path):
+            with open(experiment_id_path, "r") as f:
+                experiment_id = int(f.read().strip())
+
+            docking_results = fetch_docking_results(db_connection_string, experiment_id, binding_energy_cutoff)
+            if not docking_results.empty:
+                md_param_path = os.path.join(data_path, "md_parameters.csv")
+                display_md_input(docking_results, md_param_path)
+                md_results_path = os.path.join(results_path, "mdynamics_results")
+
+                # If MD params exist, user can run "Run Molecular Dynamics"
+                if os.path.exists(md_param_path) and st.button("Run Molecular Dynamics"):
+                    params = [
+                        f"--db_connection_string={db_connection_string}",
+                        f"--experiment_id={experiment_id}",
+                        f"--md_params={md_param_path}",
+                        f"--md_results_path={md_results_path}"
+                    ]
+                    success3 = run_nextflow_workflow("workflow3.nf", params)
+                    if success3:
+                        st.success("Molecular Dynamics simulation completed!")
+
+
 
 if __name__ == "__main__":
     main()

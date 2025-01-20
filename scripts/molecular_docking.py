@@ -5,6 +5,7 @@ import argparse
 import pandas as pd
 import traceback
 import re
+import concurrent
 
 import yaml
 from sqlalchemy import create_engine, text
@@ -545,76 +546,36 @@ def fetch_structure_fallback(uniprot_id: str, output_pdb: Path):
         return True
     return False
 
-def main():
+def process_target(args):
+    """
+    Worker function to process a single target for molecular docking.
+    """
+    row, args, experiment_dir, ligand_pdbqt, df_params = args
+    uniprot_id = row["uniprot_id"]
+    gene_id = row["disease_gene_id"]
+    if not uniprot_id or pd.isna(uniprot_id):
+        print(f"[Warning] Missing UniProt ID for row={row}, skipping.")
+        return None
 
-    parser = argparse.ArgumentParser(description="ADHD pipeline fallback & docking.")
-    parser.add_argument("--db_connection_string", required=True)
-    parser.add_argument("--experiment_id", required=True)
-    parser.add_argument("--ligand_cid", required=True)
-    parser.add_argument("--vina_executable", default="vina")
-    parser.add_argument("--output_dir", default="/home/scmbag/Desktop/ADHD_Compound_Pipeline/results/molecular_docking")
-    parser.add_argument("--docking_params", required=False,
-                        help="Path to a CSV file with docking parameters.")
-    parser.add_argument("--visualize", default=True)
-    parser.add_argument("--project_dir", required=True)
-    args = parser.parse_args()
+    protein_pdb = experiment_dir / f"{uniprot_id}.pdb"
+    protein_clean = experiment_dir / f"{uniprot_id}_clean.pdb"
+    protein_pdbqt = experiment_dir / f"{uniprot_id}.pdbqt"
 
-    with open(args.project_dir + "/config.yaml", "r") as f:
-        config = yaml.safe_load(f)
+    docked_pdbqt = experiment_dir / f"{uniprot_id}_docked.pdbqt"
+    docked_pdb = experiment_dir / f"{uniprot_id}_docked.pdb"
+    log_file = experiment_dir / f"{uniprot_id}_docking.log"
 
-    # Convert output_dir -> Path, then append experiment_id
-    experiment_dir = Path(args.output_dir) / str(args.experiment_id)
-    experiment_dir.mkdir(parents=True, exist_ok=True)
-
-    exp_id = parse_experiment_id(args.project_dir, args.experiment_id)
-    targets = fetch_therapeutic_targets(args.db_connection_string, exp_id)
-    if targets.empty:
-        raise RuntimeError("No therapeutic targets found for this experiment.")
-
-    # 1) Prepare ligand
-    ligand_sdf   = experiment_dir / "ligand.sdf"
-    ligand_pdbqt = experiment_dir / "ligand.pdbqt"
-    download_ligand(args.ligand_cid, ligand_sdf)
-    prepare_ligand_with_openbabel(ligand_sdf, ligand_pdbqt)
-
-    # 2) Docking params if any
-    if args.docking_params:
-        docking_params_path = Path(args.docking_params)
-        if docking_params_path.is_file():
-            df_params = pd.read_csv(docking_params_path)
-        else:
-            df_params = None
-    else:
-        df_params = None
-
-    # 3) For each target
-    for idx, row in targets.iterrows():
-        uniprot_id = row["uniprot_id"]
-        gene_id    = row["disease_gene_id"]
-        if not uniprot_id or pd.isna(uniprot_id):
-            print(f"[Warning] Missing UniProt ID for row={row}, skipping.")
-            continue
-
-        protein_pdb   = experiment_dir / f"{uniprot_id}.pdb"
-        protein_clean = experiment_dir / f"{uniprot_id}_clean.pdb"
-        protein_pdbqt = experiment_dir / f"{uniprot_id}.pdbqt"
-
-        docked_pdbqt  = experiment_dir / f"{uniprot_id}_docked.pdbqt"
-        docked_pdb    = experiment_dir / f"{uniprot_id}_docked.pdb"
-        log_file      = experiment_dir / f"{uniprot_id}_docking.log"
-
-        # fallback approach
+    try:
+        # Fetch protein structure
         if not fetch_structure_fallback(uniprot_id, protein_pdb):
             print(f"[Error] No structure found for {uniprot_id} on AlphaFold or RCSB. Skipping.")
-            continue
+            return None
 
-        # Clean
+        # Clean and prepare protein
         clean_pdb_biopython(protein_pdb, protein_clean)
-
-        # Convert
         prepare_protein_with_openbabel(protein_clean, protein_pdbqt)
 
-        # parse docking box
+        # Determine docking box
         if df_params is not None:
             match = df_params[df_params["disease_gene_id"] == gene_id]
             if not match.empty:
@@ -624,7 +585,7 @@ def main():
                     center, size = autodetect_pocket(protein_clean)
                 else:
                     center_str = str(row_params["center"])
-                    size_str   = str(row_params["size"])
+                    size_str = str(row_params["size"])
                     if center_str.strip() and size_str.strip():
                         center, size = get_docking_box(
                             {"Docking Site Center": center_str,
@@ -638,7 +599,7 @@ def main():
         else:
             center, size = autodetect_pocket(protein_clean)
 
-        # docking
+        # Perform docking
         perform_docking(
             vina_exec=args.vina_executable,
             protein_pdbqt=protein_pdbqt,
@@ -648,7 +609,7 @@ def main():
             size=size
         )
 
-        # parse docking results
+        # Parse docking results
         results = parse_docked_pdbqt(
             pdbqt_file_path=docked_pdbqt,
             experiment_id=args.experiment_id,
@@ -666,6 +627,43 @@ def main():
         if args.visualize:
             visualize_docking(protein_clean, docked_pdb,
                               output_image=experiment_dir / f"{uniprot_id}_visualization.png")
+
+        return f"[Success] Docking completed for {uniprot_id}"
+    except Exception as e:
+        print(f"[Error] Docking failed for {uniprot_id}: {e}")
+        return None
+
+def main():
+    # Argument parsing and setup
+    parser = argparse.ArgumentParser(description="ADHD pipeline fallback & docking.")
+    parser.add_argument("--db_connection_string", required=True)
+    parser.add_argument("--experiment_id", required=True)
+    parser.add_argument("--ligand_cid", required=True)
+    parser.add_argument("--vina_executable", default="vina")
+    parser.add_argument("--output_dir", default="/home/scmbag/Desktop/ADHD_Compound_Pipeline/results/molecular_docking")
+    parser.add_argument("--docking_params", required=False, help="Path to a CSV file with docking parameters.")
+    parser.add_argument("--visualize", default=True)
+    parser.add_argument("--project_dir", required=True)
+    args = parser.parse_args()
+
+    experiment_dir = Path(args.output_dir) / str(args.experiment_id)
+    experiment_dir.mkdir(parents=True, exist_ok=True)
+
+    targets = fetch_therapeutic_targets(args.db_connection_string, args.experiment_id)
+    if targets.empty:
+        raise RuntimeError("No therapeutic targets found for this experiment.")
+
+    ligand_sdf = experiment_dir / "ligand.sdf"
+    ligand_pdbqt = experiment_dir / "ligand.pdbqt"
+    download_ligand(args.ligand_cid, ligand_sdf)
+    prepare_ligand_with_openbabel(ligand_sdf, ligand_pdbqt)
+
+    df_params = pd.read_csv(args.docking_params) if args.docking_params else None
+
+    # Parallel processing
+    tasks = [(row, args, experiment_dir, ligand_pdbqt, df_params) for _, row in targets.iterrows()]
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        results = list(executor.map(process_target, tasks))
 
     print("[Pipeline] Molecular docking completed successfully.")
 

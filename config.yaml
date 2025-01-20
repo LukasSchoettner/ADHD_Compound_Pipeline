@@ -9,12 +9,23 @@ pipeline:
   default_compound: "Gastrodin"
   default_cid: "115067"
   default_description: "Gastrodin experiment for ADHD pipeline testing"
-  default_docking_center: "0, 0, 0"
-  default_docking_size: "20, 20, 20"
+
+  #deg analysis defaults
   raw_p: 0.05
   adj_p: 0.05
   log_fc_up: 1
   log_fc_down: -1
+
+  #molecular docking defaults
+  default_docking_center: "0, 0, 0"
+  default_docking_size: "20, 20, 20"
+
+  #molecular dynamics defauls
+  simulation_time_ns_default: 100
+  temperature_kelvin_default: 300.0
+  pressure_bar_default: 1.0
+  solven_type_default: "water"
+
 
 # File paths (if needed)
 paths:
