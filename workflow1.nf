@@ -11,7 +11,7 @@ workflow {
                       params.log_fc_down)
 
     // Channel to pass the experiment ID
-    def experiment_id_channel = Channel.fromPath("${params.data_dir}/experiment_id.txt")
+    def experiment_id_channel = Channel.fromPath("${params.nx_data_dir}/experiment_id.txt")
 
     // Run analyze_geo and wait for its completion
     def geo_analysis_done = analyze_geo(params.geo_id,

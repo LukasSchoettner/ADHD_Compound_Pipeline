@@ -264,7 +264,8 @@ def main():
                         f"--db_connection_string={db_connection_string}",
                         f"--experiment_id={experiment_id}",
                         f"--md_param_path={md_param_path}",
-                        f"--output_dir={results_path}"
+                        f"--output_dir={results_path}",
+                        f"--data_dir={data_path}",
                     ]
                     success3 = run_nextflow_workflow("workflow3.nf", params)
                     if success3:
