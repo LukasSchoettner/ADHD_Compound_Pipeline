@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import requests
 import argparse
@@ -10,10 +11,13 @@ import concurrent
 import yaml
 from sqlalchemy import create_engine, text
 
-from Bio.PDB import PDBParser, PDBIO
+from Bio.PDB import PDBParser, PDBIO, Select
 import numpy as np
 from pathlib import Path  # <-- added
 
+class KeepAll(Select):
+    def accept_residue(self, residue):
+        return True
 ###############################################################################
 # 1. Database Queries
 ###############################################################################
@@ -172,7 +176,7 @@ def clean_pdb_biopython(input_pdb: Path, output_pdb: Path):
     structure = parser.get_structure("protein", str(input_pdb))
     io = PDBIO()
     io.set_structure(structure)
-    io.save(str(output_pdb))
+    io.save(str(output_pdb), select=KeepAll())
 
 def prepare_protein_with_openbabel(input_pdb: Path, output_pdbqt: Path):
     """
@@ -201,6 +205,48 @@ def remove_ligand_tags_in_receptor(receptor_pdbqt: Path):
     # rewrite the file
     with receptor_pdbqt.open("w") as outfile:
         outfile.writelines(cleaned_lines)
+
+def extract_first_model(input_pdb, output_pdb):
+    """
+    Extract the first complete MODEL block from a PDB file, ignoring duplicate MODEL lines.
+    """
+    inside_model = False
+    model_found = False
+    with open(input_pdb, "r") as infile, open(output_pdb, "w") as outfile:
+        for line in infile:
+            if line.startswith("MODEL") and not model_found:
+                inside_model = True
+                model_found = True
+                outfile.write(line)
+                continue
+            if inside_model:
+                outfile.write(line)
+            if line.startswith("ENDMDL") and inside_model:
+                break
+    if not model_found:
+        # If there's no MODEL, maybe it's already a single-model PDB. We can just copy it.
+        print(f"[Warning] No MODEL/ENDMDL found in {input_pdb}. Copying whole PDB.")
+        shutil.copy2(input_pdb, output_pdb)
+
+def merge_protein_ligand(protein_pdb: Path, ligand_pdb: Path, output_pdb: Path):
+    """
+    Merge the receptor coordinates from protein_pdb with ligand coordinates from ligand_pdb.
+    The result is saved to output_pdb.
+    """
+    with protein_pdb.open("r") as pf, output_pdb.open("w") as of:
+        for line in pf:
+            # Skip any END or similar termination lines in the protein file
+            if line.startswith("END"):
+                continue
+            of.write(line)
+        with ligand_pdb.open("r") as lf:
+            for line in lf:
+                # Write only ATOM/HETATM lines from the ligand file
+                if line.startswith("ATOM") or line.startswith("HETATM"):
+                    of.write(line)
+        of.write("END\n")
+    print(f"[Merge] Created merged protein-ligand PDB: {output_pdb}")
+
 
 ###############################################################################
 # 5. Auto-Detect Pocket
@@ -565,6 +611,7 @@ def process_target(args):
 
     docked_pdbqt = experiment_dir / f"{uniprot_id}_docked.pdbqt"
     docked_pdb = experiment_dir / f"{uniprot_id}_docked.pdb"
+    docked_cleaned_pdb = experiment_dir / f"{uniprot_id}_docked_clean.pdb"
     log_file = experiment_dir / f"{uniprot_id}_docking.log"
 
     try:
@@ -626,6 +673,16 @@ def process_target(args):
         # Convert docked PDBQT to PDB for visualization
         subprocess.run(["obabel", "-ipdbqt", str(docked_pdbqt), "-opdb", "-O", str(docked_pdb)], check=True)
 
+        extract_first_model(docked_pdb, docked_cleaned_pdb)
+        pdb_content = docked_cleaned_pdb.read_text()
+        pdb_content = pdb_content.replace(" UNL ", " LIG ")
+        docked_cleaned_pdb.write_text(pdb_content)
+
+        # Merge protein and docked ligand to create a complex
+        docked_complex = experiment_dir / f"{uniprot_id}_docked_complex.pdb"
+        merge_protein_ligand(protein_clean, docked_cleaned_pdb, docked_complex)
+
+
         # Visualize results with PyMOL if enabled
         if args.visualize:
             visualize_docking(protein_clean, docked_pdb,
@@ -660,6 +717,16 @@ def main():
     ligand_pdbqt = experiment_dir / "ligand.pdbqt"
     download_ligand(args.ligand_cid, ligand_sdf)
     prepare_ligand_with_openbabel(ligand_sdf, ligand_pdbqt)
+
+    ligand_pdb = experiment_dir / "ligand.pdb"  # Define where to save ligand.pdb
+    subprocess.run([
+        "obabel",
+        str(ligand_pdbqt),
+        "-opdb",
+        "-O",
+        str(ligand_pdb)
+    ], check=True)
+    print(f"[Ligand] Converted ligand.pdbqt to {ligand_pdb}")
 
     df_params = pd.read_csv(args.docking_params) if args.docking_params else None
 
