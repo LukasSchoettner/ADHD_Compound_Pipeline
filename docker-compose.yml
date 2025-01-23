@@ -1,0 +1,52 @@
+services:
+  db:
+    image: postgres:15
+    container_name: adhd_postgres
+
+    # Environment variables to set up the DB
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: admin
+      POSTGRES_DB: adhd_research
+
+    # Publish the port if you want to connect from your host or other containers
+    ports:
+      - "5432:5432"
+
+    # Use a named volume for persistent storage
+    # AND mount your schema dump into the initdb directory
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./data/database_scheme/dump-adhd_research.sql:/docker-entrypoint-initdb.d/00_schema.sql
+
+  adhd_pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile  # or wherever your Dockerfile is
+    image: adhd_pipeline:latest
+    container_name: adhd_pipeline
+
+    # If you have GPU, you might add the device request block here
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    # Mount entire project folder so scripts/data are accessible
+    volumes:
+      - ./:/app
+    working_dir: /app
+
+    # Expose Streamlit or other ports
+    ports:
+      - "8501:8501"
+
+    depends_on:
+      - db
+    command: ["/bin/bash"]
+
+volumes:
+  db_data:

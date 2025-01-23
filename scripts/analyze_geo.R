@@ -1,30 +1,4 @@
 #!/usr/bin/env Rscript
-options(repos = c(CRAN = "https://cloud.r-project.org"))
-
-if (!requireNamespace("BiocManager", quietly=TRUE)) {
-    install.packages("BiocManager")
-}
-
-if (!requireNamespace("argparse", quietly=TRUE)) {
-    install.packages("argparse", dependencies=TRUE, repos="https://cran.r-project.org")
-}
-
-required_packages <- c(
-    "argparse", "limma", "Biobase", "ggplot2",
-    "dplyr", "DBI", "RPostgres", "tibble"
-)
-
-BiocManager::install("GEOquery", ask = FALSE, update = FALSE)
-BiocManager::install(c("RCurl", "GenomeInfoDb", "Biostrings", "KEGGREST", "AnnotationDbi"), ask = FALSE, update = FALSE)
-BiocManager::install("AnnotationDbi", ask = FALSE, update = FALSE)
-
-
-for (pkg in required_packages) {
-    if (!requireNamespace(pkg, quietly=TRUE)) {
-        install.packages(pkg)
-    }
-}
-
 
 ###############################################################################
 # Load required libraries
@@ -369,7 +343,7 @@ if (nrow(deg_results_filtered)>0) {
   cat("No DEGs found. Setting degs_found=0 in 'experiment' table.\n")
   con <- dbConnect(
     RPostgres::Postgres(),
-    host="/run/postgresql",
+    host="db",
     port=5432,
     dbname="adhd_research",
     user="postgres",

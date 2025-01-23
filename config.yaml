@@ -1,6 +1,6 @@
 # Database connection strings
 database:
-  connection_string: "postgresql://postgres:admin@localhost/adhd_research"
+  connection_string: "postgresql://postgres:admin@db/adhd_research"
 
 # Pipeline parameters
 pipeline:
@@ -29,7 +29,6 @@ pipeline:
 
 # File paths (if needed)
 paths:
-  logs: "/home/scmbag/Desktop/ADHD_Compound_Pipeline/logs/"
-  results: "/home/scmbag/Desktop/ADHD_Compound_Pipeline/results"
-  data: "/home/scmbag/Desktop/ADHD_Compound_Pipeline/data"
-  mgltools: "/home/scmbag/Desktop/ADHD_Compound_Pipeline/tools/MGLTools-1.5.7/MGLToolsPckgs/AutoDockTools/Utilities24"
+  logs: "/app/logs"
+  results: "/app/results"
+  data: "/app/data"
