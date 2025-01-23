@@ -24,8 +24,9 @@ def fetch_therapeutic_targets(DB_CONNECTION_STRING, experiment_id):
     try:
         engine = create_engine(DB_CONNECTION_STRING)
         query = text("""
-        SELECT DISTINCT tt.deg_name AS current_symbol
+        SELECT tt.disease_gene_id, dg.gene_name AS current_symbol
         FROM therapeutic_targets tt
+        INNER JOIN disease_genes dg ON tt.disease_gene_id = dg.disease_gene_id
         WHERE tt.experiment_id = :experiment_id;
         """)
         with engine.connect() as connection:
@@ -119,8 +120,7 @@ def save_ppi_to_db(ppi_data, experiment_id, DB_CONNECTION_STRING):
 def visualize_ppi_network(ppi_data, output_path=None, title="Protein-Protein Interaction (PPI) Network",
                           with_labels=True):
     """
-    Visualize the PPI network using networkx and matplotlib,
-    with node sizes/colors based on their connectivity (degree).
+    Visualize the PPI network with improved clustering, edge visibility, and node grouping.
 
     Args:
         ppi_data (pd.DataFrame): DataFrame with interaction data.
@@ -128,52 +128,57 @@ def visualize_ppi_network(ppi_data, output_path=None, title="Protein-Protein Int
         output_path (str): If provided, saves the plot to a file.
         with_labels (bool): Whether to draw labels (gene names) on the nodes.
     """
+    # Build the graph
     G = nx.Graph()
     for _, row in ppi_data.iterrows():
         G.add_edge(row["preferredName_A"], row["preferredName_B"], weight=row["score"])
 
     # Node degrees for sizing
     degrees = dict(G.degree())
-    node_sizes = [degrees[node] * 300 for node in G.nodes()]  # scale up
+    node_sizes = [degrees[node] * 300 for node in G.nodes()]  # Adjust size scaling here
 
-    # Layout
-    fig, ax = plt.subplots(figsize=(12, 8))
-    pos = nx.spring_layout(G, seed=42)
+    # Node layout with spring layout
+    pos = nx.spring_layout(G, seed=42, k=0.3)  # Adjust k to control spacing
 
-    # Node color by degree
+    # Node colors based on degree
     node_color = [degrees[node] for node in G.nodes()]
     sm = plt.cm.ScalarMappable(cmap=plt.cm.viridis, norm=plt.Normalize(vmin=min(node_color), vmax=max(node_color)))
 
-    # Draw nodes
+    # Edge widths based on interaction scores
+    edges = G.edges(data=True)
+    scores = [d["weight"] for (_, _, d) in edges]
+    edge_widths = [(s / max(scores)) * 5 for s in scores]  # Normalize and scale edge widths
+
+    # Edge colors based on scores
+    edge_colors = [(s / max(scores)) for s in scores]  # Normalize scores for color mapping
+
+    # Plot the network
+    fig, ax = plt.subplots(figsize=(14, 10))
     nx.draw_networkx_nodes(
         G, pos, node_size=node_sizes, node_color=node_color,
         cmap=plt.cm.viridis, alpha=0.9, ax=ax
     )
-
-    # Draw labels
-    if with_labels:
-        nx.draw_networkx_labels(G, pos, font_size=9, ax=ax)
-
-    # Draw edges with better visibility
-    edges = G.edges(data=True)
-    scores = [d["weight"] for (_, _, d) in edges]
-    edge_colors = "black"  # Set edge color to gray for better contrast
-    edge_widths = [s / 10 for s in scores]  # Scale edge widths based on interaction scores
     nx.draw_networkx_edges(
-        G, pos, edge_color=edge_colors, width=edge_widths, alpha=0.7, ax=ax
+        G, pos, edge_color=edge_colors, edge_cmap=plt.cm.plasma,
+        edge_vmin=0, edge_vmax=1,  # Normalized range for color mapping
+        width=edge_widths, alpha=0.7, ax=ax
     )
+    if with_labels:
+        nx.draw_networkx_labels(G, pos, font_size=8, font_color="black", ax=ax)
 
-    # Add colorbar
-    fig.colorbar(sm, ax=ax, label="Node Degree")
-    ax.set_title(title)
+    # Add colorbars for nodes and edges
+    cbar = fig.colorbar(sm, ax=ax, orientation="vertical", label="Node Degree")
+    edge_sm = plt.cm.ScalarMappable(cmap=plt.cm.plasma, norm=plt.Normalize(vmin=min(scores), vmax=max(scores)))
+    fig.colorbar(edge_sm, ax=ax, orientation="vertical", label="Interaction Score", fraction=0.046, pad=0.04)
 
+    # Add title and save the plot
+    ax.set_title(title, fontsize=16)
+    plt.tight_layout()
     if output_path:
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        plt.savefig(output_path, dpi=150, bbox_inches="tight")
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
         print(f"PPI network plot saved to {output_path}")
     plt.show()
-
-
 
 
 

@@ -55,6 +55,24 @@ def download_ligand(pubchem_cid, output_sdf: Path):
     else:
         raise RuntimeError(f"[Ligand] Download error for CID={pubchem_cid}. HTTP {resp.status_code}")
 
+def fetch_compound_properties(pubchem_cid):
+    """
+    Fetch detailed compound properties from PubChem for a given CID.
+    """
+    url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{pubchem_cid}/property/MolecularWeight,MolecularFormula,IUPACName/JSON"
+    resp = requests.get(url, timeout=15)
+    if resp.status_code == 200:
+        data = resp.json()
+        if "PropertyTable" in data and "Properties" in data["PropertyTable"]:
+            properties = data["PropertyTable"]["Properties"][0]
+            return {
+                "pubchem_id": pubchem_cid,
+                "compound_name": properties.get("IUPACName", "Unknown"),
+                "molecular_weight": properties.get("MolecularWeight", None),
+                "chemical_structure": None  # Placeholder if needed
+            }
+    raise RuntimeError(f"[PubChem] Error fetching properties for CID={pubchem_cid}. HTTP {resp.status_code}")
+
 def prepare_ligand_with_openbabel(input_sdf: Path, output_pdbqt: Path):
     """
     Generate a minimized PDB from the input SDF, then convert to PDBQT.
@@ -409,31 +427,53 @@ def perform_docking(vina_exec: str,
 # 7. Visualization
 ###############################################################################
 
-def visualize_docking(receptor_pdb: Path, docked_ligand_pdb: Path, output_image=None):
+def visualize_docking(receptor_pdb: Path, docked_ligand_pdb: Path, output_image: Path):
     """
-    Visualize docking results using PyMOL (via pymol2).
+    Visualize docking results using PyMOL (via pymol2) with better handling for visibility and file locations.
+
+    Args:
+        receptor_pdb (Path): Path to the receptor PDB file.
+        docked_ligand_pdb (Path): Path to the docked ligand PDB file.
+        output_image (Path): Path to save the PNG visualization.
     """
     import pymol2
 
+    pse_output = output_image.with_suffix(".pse")  # Save .pse file in the same directory as the image
+
     with pymol2.PyMOL() as pymol:
+        # Load receptor and ligand
         pymol.cmd.load(str(receptor_pdb), "receptor")
         pymol.cmd.load(str(docked_ligand_pdb), "ligand")
 
+        # Display receptor as surface
         pymol.cmd.show("surface", "receptor")
         pymol.cmd.color("cyan", "receptor")
+
+        # Display ligand as sticks
         pymol.cmd.show("sticks", "ligand")
         pymol.cmd.color("red", "ligand")
+
+        # Highlight binding site (optional)
         pymol.cmd.select("binding_site", "receptor within 5.0 of ligand")
         pymol.cmd.show("sticks", "binding_site")
         pymol.cmd.color("yellow", "binding_site")
 
-        if output_image:
-            pymol.cmd.bg_color("white")
-            pymol.cmd.png(str(output_image), ray=1)
-            print(f"[Visualization] Image saved as {output_image}")
+        # Adjust view to ensure ligand visibility
+        pymol.cmd.orient("all")  # Ensures the entire system is visible
+        pymol.cmd.zoom("all", buffer=15)  # Adds extra space around the objects
+        pymol.cmd.turn("x", 90)  # Rotate along x-axis for better view
+        pymol.cmd.turn("y", 45)  # Slight tilt for a 3D perspective
 
-        pymol.cmd.save("docking_visualization.pse")
-        print("[Visualization] PyMOL session saved as docking_visualization.pse")
+        # Save image
+        pymol.cmd.bg_color("white")  # Set background color to white
+        pymol.cmd.ray(1200, 900)  # High-resolution rendering
+        pymol.cmd.png(str(output_image))
+        print(f"[Visualization] Image saved as {output_image}")
+
+        # Save PyMOL session
+        pymol.cmd.save(str(pse_output))
+        print(f"[Visualization] PyMOL session saved as {pse_output}")
+
 
 ###############################################################################
 # 8. Save results to DB
@@ -471,6 +511,31 @@ def insert_docking_results(db_connection_string: str, docking_results: list):
         print(f"[DB] Insertion failed: {e}")
     finally:
         engine.dispose()
+
+def insert_natural_compound(db_connection_string, compound_data):
+    """
+    Insert or update the natural_compounds table with compound data.
+    """
+    engine = create_engine(db_connection_string)
+    try:
+        with engine.begin() as conn:
+            query = text("""
+                INSERT INTO natural_compounds (
+                    pubchem_id, compound_name, molecular_weight, chemical_structure
+                ) VALUES (
+                    :pubchem_id, :compound_name, :molecular_weight, :chemical_structure
+                )
+                ON CONFLICT (pubchem_id) DO UPDATE SET
+                    compound_name = EXCLUDED.compound_name,
+                    molecular_weight = EXCLUDED.molecular_weight,
+                    chemical_structure = EXCLUDED.chemical_structure
+            """)
+            conn.execute(query, compound_data)
+    except Exception as e:
+        print(f"[DB] Failed to insert natural compound data: {e}")
+    finally:
+        engine.dispose()
+
 
 def parse_docking_results(log_file_path: Path,
                           experiment_id: str,
@@ -685,8 +750,9 @@ def process_target(args):
 
         # Visualize results with PyMOL if enabled
         if args.visualize:
-            visualize_docking(protein_clean, docked_pdb,
-                              output_image=experiment_dir / f"{uniprot_id}_visualization.png")
+            output_image_path = experiment_dir / f"{uniprot_id}_visualization.png"
+            visualize_docking(protein_clean, docked_pdb, output_image=output_image_path)
+
 
         return f"[Success] Docking completed for {uniprot_id}"
     except Exception as e:
@@ -709,10 +775,21 @@ def main():
     experiment_dir = Path(args.output_dir) / str(args.experiment_id)
     experiment_dir.mkdir(parents=True, exist_ok=True)
 
+    # Fetch and save ligand properties
+    try:
+        compound_data = fetch_compound_properties(args.ligand_cid)
+        insert_natural_compound(args.db_connection_string, compound_data)
+        print(f"[NaturalCompounds] Saved data for CID={args.ligand_cid}")
+    except Exception as e:
+        print(f"[Error] Failed to fetch or save compound data: {e}")
+        return
+
+    # Fetch therapeutic targets
     targets = fetch_therapeutic_targets(args.db_connection_string, args.experiment_id)
     if targets.empty:
         raise RuntimeError("No therapeutic targets found for this experiment.")
 
+    # Download and prepare ligand
     ligand_sdf = experiment_dir / "ligand.sdf"
     ligand_pdbqt = experiment_dir / "ligand.pdbqt"
     download_ligand(args.ligand_cid, ligand_sdf)

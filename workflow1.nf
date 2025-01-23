@@ -18,6 +18,7 @@ workflow {
                                         params.samples,
                                         params.groups,
                                         experiment_id_channel,
+                                        params.ligand_cid,
                                         params.raw_p,
                                         params.adj_p,
                                         params.log_fc_up,
@@ -74,6 +75,7 @@ process analyze_geo {
     val samples
     val groups
     val experiment_id
+    val ligand_cid
     val raw_p
     val adj_p
     val log_fc_up
@@ -89,10 +91,12 @@ process analyze_geo {
         --experiment_id $experiment_id \\
         --groups $groups \\
         --db_connection_string "${params.db_connection_string}" \\
+        --ligand_cid $ligand_cid \\
         --raw_p $raw_p \\
         --adj_p $adj_p \\
         --log_fc_up $log_fc_up \\
-        --log_fc_down $log_fc_down
+        --log_fc_down $log_fc_down \\
+        --results_dir "${params.results_dir}"
     echo "Analyze GEO completed." > analyze_geo_done.txt
     """
 }

@@ -1,4 +1,30 @@
 #!/usr/bin/env Rscript
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+
+if (!requireNamespace("BiocManager", quietly=TRUE)) {
+    install.packages("BiocManager")
+}
+
+if (!requireNamespace("argparse", quietly=TRUE)) {
+    install.packages("argparse", dependencies=TRUE, repos="https://cran.r-project.org")
+}
+
+required_packages <- c(
+    "argparse", "limma", "Biobase", "ggplot2",
+    "dplyr", "DBI", "RPostgres", "tibble"
+)
+
+BiocManager::install("GEOquery", ask = FALSE, update = FALSE)
+BiocManager::install(c("RCurl", "GenomeInfoDb", "Biostrings", "KEGGREST", "AnnotationDbi"), ask = FALSE, update = FALSE)
+BiocManager::install("AnnotationDbi", ask = FALSE, update = FALSE)
+
+
+for (pkg in required_packages) {
+    if (!requireNamespace(pkg, quietly=TRUE)) {
+        install.packages(pkg)
+    }
+}
+
 
 ###############################################################################
 # Load required libraries
@@ -139,6 +165,8 @@ parser$add_argument("--db_connection_string", type="character", required=TRUE,
                     help="Database connection string")
 parser$add_argument("--experiment_id", type="character", required=TRUE,
                     help="Experiment ID (integer) or path to file containing it")
+parser$add_argument("--ligand_cid", type="character", required=TRUE,
+                    help="PubChem id of ligand")
 
 # Thresholds
 parser$add_argument("--raw_p",      type="character", required=TRUE,
@@ -149,6 +177,8 @@ parser$add_argument("--log_fc_up",  type="character", required=TRUE,
                     help="Minimum logFC for up-regulation")
 parser$add_argument("--log_fc_down",type="character", required=TRUE,
                     help="Maximum logFC for down-regulation (should be negative)")
+parser$add_argument("--results_dir",type="character", required=TRUE,
+                    help="Path to results folder")
 
 args <- parser$parse_args()
 
@@ -306,7 +336,8 @@ if (nrow(deg_results_filtered)>0) {
     log_fold_change = deg_results_filtered$logFC,
     p_value         = deg_results_filtered$P.Value,
     degs            = deg_results_filtered$significant,
-    experiment_id   = experiment_id
+    experiment_id   = experiment_id,
+    pubchem_id      = args$ligand_cid
   )
 
   # Connect
@@ -367,8 +398,8 @@ if (nrow(deg_results)>0) {
          y="-Log10(Adjusted P-value)") +
     theme_minimal()
 
-  ggsave("volcano_plot_final.png", volcano_plot, width=8, height=6)
-  cat("Saved volcano_plot_final.png\n")
+  ggsave(file.path(args$results_dir, "volcano_plot_final.png"), volcano_plot, width=8, height=6)
+  cat("Saved volcano_plot_final.png to", args$results_dir, "\n")
 } else {
   cat("No data to plot.\n")
 }

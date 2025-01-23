@@ -3,8 +3,8 @@ import yaml
 import subprocess
 import os
 import pandas as pd
-import psycopg2
 from sqlalchemy import create_engine
+import sys
 
 def fetch_therapeutic_targets(db_connection_string, experiment_id):
     """
@@ -30,24 +30,51 @@ def fetch_docking_results(db_connection_string, experiment_id, energy_cutoff):
     """
     Query the database to fetch docking results based on energy cutoff.
     Includes uniprot_id so we can locate the correct PDBs.
+    Ensures only the result with the least binding energy per uniprot_id is included.
     """
     try:
+        from sqlalchemy import create_engine
+        import pandas as pd
+
+        # Establish connection to the database
         engine = create_engine(db_connection_string)
+
+        # Query to fetch docking results with the least binding energy per uniprot_id
         query = """
-            SELECT dr.docking_id,
-                   dr.uniprot_id,    -- Make sure docking_results has this column
-                   dr.ligand_cid,
-                   dr.deg_id,
-                   dr.binding_energy,
-                   dg.gene_name
-            FROM docking_results dr
-            INNER JOIN degs dg ON dr.deg_id = dg.deg_id
-            WHERE dr.experiment_id = %(exp_id)s
-              AND dr.binding_energy <= %(cutoff)s;
+            SELECT docking_id,
+                   uniprot_id,
+                   ligand_cid,
+                   deg_id,
+                   binding_energy,
+                   gene_name
+            FROM (
+                SELECT dr.docking_id,
+                       dr.uniprot_id,
+                       dr.ligand_cid,
+                       dr.deg_id,
+                       dr.binding_energy,
+                       dg.gene_name,
+                       RANK() OVER (
+                           PARTITION BY dr.uniprot_id 
+                           ORDER BY dr.binding_energy ASC
+                       ) AS rank
+                FROM docking_results dr
+                INNER JOIN degs dg ON dr.deg_id = dg.deg_id
+                WHERE dr.experiment_id = %(exp_id)s
+                  AND dr.binding_energy <= %(cutoff)s
+            ) ranked_results
+            WHERE rank = 1;
         """
+
+        # Parameters for the query
         params_dict = {"exp_id": experiment_id, "cutoff": energy_cutoff}
+
+        # Execute the query and fetch results into a pandas DataFrame
         results = pd.read_sql_query(query, con=engine, params=params_dict)
+
+        # Close the database connection
         engine.dispose()
+
         return results
     except Exception as e:
         st.error(f"Error fetching docking results: {e}")
@@ -211,7 +238,8 @@ def main():
             f"--adj_p={adj_p}",
             f"--raw_p={raw_p}",
             f"--log_fc_up={log_fc_up}",
-            f"--log_fc_down={log_fc_down}"
+            f"--log_fc_down={log_fc_down}",
+            f"--ligand_cid={ligand_cid}"
         ]
         success = run_nextflow_workflow("workflow1.nf", params)
         if success:

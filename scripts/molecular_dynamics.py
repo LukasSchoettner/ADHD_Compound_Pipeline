@@ -276,7 +276,7 @@ def validate_topology_gro_consistency(gro_file, top_file):
         raise ValueError(f"Mismatch in .gro ({num_atoms_gro}) vs .top ({total_atoms_top})")
 
 def run_gromacs_pipeline(combined_gro, combined_top, out_dir, data_dir,
-                         simulation_time, temperature, pressure):
+                         simulation_time, temperature, pressure, simulation_type, use_gpu=False):
     """
     The usual steps: define box, solvate, add ions, energy minimize, etc.
     """
@@ -344,13 +344,55 @@ def run_gromacs_pipeline(combined_gro, combined_top, out_dir, data_dir,
     ]
     run_command(cmd)
 
-    cmd = [
-        "gmx", "mdrun",
-        "-v", "-deffnm", str(out_dir / "em")
-    ]
+    # Use GPU for energy minimization
+    em_defnm = str(out_dir / "em")
+
+    if use_gpu:
+        cmd = [
+            "gmx", "mdrun",
+            "-v", "-deffnm", em_defnm,
+            "-gpu_id", "0"  # Specify GPU device index; adjust if needed
+        ]
+    else:
+        cmd = [
+            "gmx", "mdrun",
+            "-v", "-deffnm", em_defnm,
+        ]
     run_command(cmd)
 
     print(f"[MD] Completed EM. Results in {out_dir}")
+
+    # If simulation type is MD, proceed with production MD simulation
+    if simulation_type == "md":
+        # 4. Production MD simulation setup
+        md_tpr = out_dir / "md.tpr"
+        md_mdp = Path(data_dir) / "molecular_dynamics" / "md.mdp"  # Ensure md.mdp exists here
+
+        cmd = [
+            "gmx", "grompp",
+            "-f", str(md_mdp),
+            "-c", str(out_dir / "em.gro"),  # start from the minimized structure
+            "-p", str(topol_combined),
+            "-o", str(md_tpr)
+        ]
+        run_command(cmd)
+
+        # Use GPU for production MD
+        md_defnm = str(out_dir / "md")
+        if use_gpu:
+            cmd = [
+                "gmx", "mdrun",
+                "-v", "-deffnm", md_defnm,
+                "-gpu_id", "0"  # Adjust if needed
+            ]
+        else:
+            cmd = [
+                "gmx", "mdrun",
+                "-v", "-deffnm", md_defnm
+            ]
+        run_command(cmd)
+
+        print(f"[MD] Completed production MD. Results in {out_dir}")
 
 def insert_md_record(db_connection_string, record):
     """
@@ -379,7 +421,7 @@ def insert_md_record(db_connection_string, record):
         engine.dispose()
 
 def process_md_simulation(row, docking_dir, md_exp_results_dir,
-                          db_connection_string, experiment_id, data_dir, md_exp_data_dir):
+                          db_connection_string, experiment_id, data_dir, md_exp_data_dir, simulation_type):
     """
     Process a single MD simulation:
       1) Extract first model (if multiple).
@@ -446,7 +488,8 @@ def process_md_simulation(row, docking_dir, md_exp_results_dir,
         combined_gro, combined_top,
         md_exp_sim_results_dir,
         data_dir,
-        sim_time, temp, pressure
+        sim_time, temp, pressure,
+        simulation_type
     )
 
     # 7. Insert DB record
@@ -479,7 +522,11 @@ def main():
     parser.add_argument("--output_dir", required=True)
     parser.add_argument("--data_dir", required=True)
     parser.add_argument("--num_workers", type=int, default=1)
+    parser.add_argument("--simulation_type", choices=["em", "md"], default="md",
+                        help="Choose simulation type: 'em' for energy minimization or 'md' for production MD")
     args = parser.parse_args()
+
+    simulation_type = args.simulation_type
 
     # Paths
     output_dir = Path(args.output_dir)
@@ -509,7 +556,8 @@ def main():
             args.db_connection_string,
             experiment_id,
             data_dir,
-            md_exp_data_dir
+            md_exp_data_dir,
+            simulation_type
         )
 
     print("[Pipeline] All simulations completed.")
