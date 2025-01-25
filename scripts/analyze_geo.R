@@ -1,5 +1,7 @@
 #!/usr/bin/env Rscript
 
+source("/app/renv/activate.R")
+.libPaths(c("/app/renv/library/", .libPaths()))
 ###############################################################################
 # Load required libraries
 ###############################################################################
@@ -317,7 +319,7 @@ if (nrow(deg_results_filtered)>0) {
   # Connect
   con <- dbConnect(
     RPostgres::Postgres(),
-    host="/run/postgresql",
+    host="db",
     port=5432,
     dbname="adhd_research",
     user="postgres",

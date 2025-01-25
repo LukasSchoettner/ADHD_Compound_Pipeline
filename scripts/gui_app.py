@@ -200,6 +200,7 @@ def main():
     results_path = config["paths"]["results"]
     data_path = config["paths"]["data"]
     experiment_id_path = os.path.join(data_path, "experiment_id.txt")
+    #analyze_geo_done_path = os.path.join(data_path, "analyze_geo_done.txt")
     docking_parameter_path = os.path.join(data_path, "docking_parameters.csv")
     db_connection_string = config["database"]["connection_string"]
 

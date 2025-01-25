@@ -32,6 +32,25 @@
     "Version": "3.18"
   },
   "Packages": {
+    "AnnotationDbi": {
+      "Package": "AnnotationDbi",
+      "Version": "1.64.1",
+      "Source": "Bioconductor",
+      "Requirements": [
+        "Biobase",
+        "BiocGenerics",
+        "DBI",
+        "IRanges",
+        "KEGGREST",
+        "R",
+        "RSQLite",
+        "S4Vectors",
+        "methods",
+        "stats",
+        "stats4"
+      ],
+      "Hash": "27587689922e22f60ec9ad0182a0a825"
+    },
     "Biobase": {
       "Package": "Biobase",
       "Version": "2.62.0",
@@ -76,6 +95,27 @@
       ],
       "Hash": "2ecaed86684f5fae76ed5530f9d29c4a"
     },
+    "Biostrings": {
+      "Package": "Biostrings",
+      "Version": "2.70.3",
+      "Source": "Bioconductor",
+      "Repository": "Bioconductor 3.18",
+      "Requirements": [
+        "BiocGenerics",
+        "GenomeInfoDb",
+        "IRanges",
+        "R",
+        "S4Vectors",
+        "XVector",
+        "crayon",
+        "grDevices",
+        "graphics",
+        "methods",
+        "stats",
+        "utils"
+      ],
+      "Hash": "86ffa781f132f54e9c963a13fd6cf9fc"
+    },
     "DBI": {
       "Package": "DBI",
       "Version": "1.2.3",
@@ -105,6 +145,62 @@
         "xml2"
       ],
       "Hash": "58fcaef94e52f4d6053eb4f8fd4a479d"
+    },
+    "GenomeInfoDb": {
+      "Package": "GenomeInfoDb",
+      "Version": "1.38.8",
+      "Source": "Bioconductor",
+      "Repository": "Bioconductor 3.18",
+      "Requirements": [
+        "BiocGenerics",
+        "GenomeInfoDbData",
+        "IRanges",
+        "R",
+        "RCurl",
+        "S4Vectors",
+        "methods",
+        "stats",
+        "stats4",
+        "utils"
+      ],
+      "Hash": "155053909d2831bfac154a1118151d6b"
+    },
+    "GenomeInfoDbData": {
+      "Package": "GenomeInfoDbData",
+      "Version": "1.2.11",
+      "Source": "Bioconductor",
+      "Requirements": [
+        "R"
+      ],
+      "Hash": "10f32956181d1d46bd8402c93ac193e8"
+    },
+    "IRanges": {
+      "Package": "IRanges",
+      "Version": "2.36.0",
+      "Source": "Bioconductor",
+      "Requirements": [
+        "BiocGenerics",
+        "R",
+        "S4Vectors",
+        "methods",
+        "stats",
+        "stats4",
+        "utils"
+      ],
+      "Hash": "f98500eeb93e8a66ad65be955a848595"
+    },
+    "KEGGREST": {
+      "Package": "KEGGREST",
+      "Version": "1.42.0",
+      "Source": "Bioconductor",
+      "Requirements": [
+        "Biostrings",
+        "R",
+        "httr",
+        "methods",
+        "png"
+      ],
+      "Hash": "8d6e9f4dce69aec9c588c27ae79be08e"
     },
     "MASS": {
       "Package": "MASS",
@@ -216,6 +312,56 @@
       ],
       "Hash": "beb7e18bf3f9e096f716a52a77ec793c"
     },
+    "RSQLite": {
+      "Package": "RSQLite",
+      "Version": "2.3.9",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "DBI",
+        "R",
+        "bit64",
+        "blob",
+        "cpp11",
+        "memoise",
+        "methods",
+        "pkgconfig",
+        "plogr",
+        "rlang"
+      ],
+      "Hash": "52294139fc7a21bca806b49ae2f315ca"
+    },
+    "S4Vectors": {
+      "Package": "S4Vectors",
+      "Version": "0.40.2",
+      "Source": "Bioconductor",
+      "Repository": "Bioconductor 3.18",
+      "Requirements": [
+        "BiocGenerics",
+        "R",
+        "methods",
+        "stats",
+        "stats4",
+        "utils"
+      ],
+      "Hash": "1716e201f81ced0f456dd5ec85fe20f8"
+    },
+    "XVector": {
+      "Package": "XVector",
+      "Version": "0.42.0",
+      "Source": "Bioconductor",
+      "Requirements": [
+        "BiocGenerics",
+        "IRanges",
+        "R",
+        "S4Vectors",
+        "methods",
+        "tools",
+        "utils",
+        "zlibbioc"
+      ],
+      "Hash": "65c0b6bca03f88758f86ef0aa18c4873"
+    },
     "argparse": {
       "Package": "argparse",
       "Version": "2.2.5",
@@ -228,6 +374,16 @@
         "jsonlite"
       ],
       "Hash": "e57988b5f8832fedf35c7836333402d0"
+    },
+    "askpass": {
+      "Package": "askpass",
+      "Version": "1.2.1",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "sys"
+      ],
+      "Hash": "c39f4155b3ceb1a9a2799d700fbd4b6a"
     },
     "bit": {
       "Package": "bit",
@@ -254,6 +410,13 @@
       ],
       "Hash": "4f572fbc586294afff277db583b9060f"
     },
+    "bitops": {
+      "Package": "bitops",
+      "Version": "1.0-9",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Hash": "d972ef991d58c19e6efa71b21f5e144b"
+    },
     "blob": {
       "Package": "blob",
       "Version": "1.2.4",
@@ -265,6 +428,17 @@
         "vctrs"
       ],
       "Hash": "40415719b5a479b87949f3aa0aee737c"
+    },
+    "cachem": {
+      "Package": "cachem",
+      "Version": "1.1.0",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "fastmap",
+        "rlang"
+      ],
+      "Hash": "cd9a672193789068eb5a2aad65a0dedf"
     },
     "cli": {
       "Package": "cli",
@@ -386,6 +560,13 @@
       "Repository": "CRAN",
       "Hash": "680887028577f3fa2a81e410ed0d6e42"
     },
+    "fastmap": {
+      "Package": "fastmap",
+      "Version": "1.2.0",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Hash": "aa5e1cd11c2d15497494c5292d7ffcc8"
+    },
     "findpython": {
       "Package": "findpython",
       "Version": "1.0.9",
@@ -469,6 +650,21 @@
         "vctrs"
       ],
       "Hash": "b59377caa7ed00fa41808342002138f9"
+    },
+    "httr": {
+      "Package": "httr",
+      "Version": "1.4.7",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R",
+        "R6",
+        "curl",
+        "jsonlite",
+        "mime",
+        "openssl"
+      ],
+      "Hash": "ac107251d9d9fd72f0ca8049988f1d7f"
     },
     "isoband": {
       "Package": "isoband",
@@ -568,6 +764,17 @@
       ],
       "Hash": "7ce2733a9826b3aeb1775d56fd305472"
     },
+    "memoise": {
+      "Package": "memoise",
+      "Version": "2.0.1",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "cachem",
+        "rlang"
+      ],
+      "Hash": "e2817ccf4a065c5d9d7f2cfbe7c1d78c"
+    },
     "mgcv": {
       "Package": "mgcv",
       "Version": "1.9-1",
@@ -584,6 +791,16 @@
         "utils"
       ],
       "Hash": "110ee9d83b496279960e162ac97764ce"
+    },
+    "mime": {
+      "Package": "mime",
+      "Version": "0.12",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "tools"
+      ],
+      "Hash": "18e9c28c1d3ca1560ce30658b22ce104"
     },
     "munsell": {
       "Package": "munsell",
@@ -609,6 +826,16 @@
         "utils"
       ],
       "Hash": "ccbb8846be320b627e6aa2b4616a2ded"
+    },
+    "openssl": {
+      "Package": "openssl",
+      "Version": "2.3.1",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "askpass"
+      ],
+      "Hash": "37a7f0abce0349f5950ce49f38c7626b"
     },
     "pheatmap": {
       "Package": "pheatmap",
@@ -659,6 +886,16 @@
       "Source": "Repository",
       "Repository": "CRAN",
       "Hash": "09eb987710984fc2905c7129c7d85e65"
+    },
+    "png": {
+      "Package": "png",
+      "Version": "0.1-8",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Requirements": [
+        "R"
+      ],
+      "Hash": "bd54ba8a0a5faded999a7aab6e46b374"
     },
     "prettyunits": {
       "Package": "prettyunits",
@@ -804,6 +1041,13 @@
         "vctrs"
       ],
       "Hash": "960e2ae9e09656611e0b8214ad543207"
+    },
+    "sys": {
+      "Package": "sys",
+      "Version": "3.4.3",
+      "Source": "Repository",
+      "Repository": "CRAN",
+      "Hash": "de342ebfebdbf40477d0758d05426646"
     },
     "tibble": {
       "Package": "tibble",
@@ -969,6 +1213,13 @@
         "rlang"
       ],
       "Hash": "1d0336142f4cd25d8d23cd3ba7a8fb61"
+    },
+    "zlibbioc": {
+      "Package": "zlibbioc",
+      "Version": "1.48.2",
+      "Source": "Bioconductor",
+      "Repository": "Bioconductor 3.18",
+      "Hash": "2344be62c2da4d9e9942b5d8db346e59"
     }
   }
 }

@@ -68,7 +68,7 @@ process create_experiment {
 
 
 process analyze_geo {
-    publishDir 'results'
+    publishDir 'data'
 
     input:
     val geo_id
@@ -101,6 +101,7 @@ process analyze_geo {
     """
 }
 
+
 process match_deg_and_disease_genes {
 
     input:
@@ -117,7 +118,7 @@ process match_deg_and_disease_genes {
 }
 
 process build_ppi_network {
-    publishDir 'results'
+    publishDir 'data'
 
     input:
     val experiment_id
@@ -137,7 +138,7 @@ process build_ppi_network {
 }
 
 process perform_pathway_enrichment {
-    publishDir 'results'
+    publishDir 'data'
 
     input:
     val db_connection_string
