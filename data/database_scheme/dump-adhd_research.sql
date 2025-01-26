@@ -31,25 +31,26 @@ CREATE TABLE degs (
 --
 -- 3) DISEASE_GENES
 --
-CREATE TABLE disease_genes (
-    disease_gene_id   SERIAL PRIMARY KEY,
-    gene_name         VARCHAR(255),
-    description       VARCHAR(255),
-    source            VARCHAR(255),
-    biotype           VARCHAR(255),
-    object_type       VARCHAR(255),
-    start_position    INT,
-    end_position      INT,
-    uniprot_id        VARCHAR(255)
+CREATE TABLE IF NOT EXISTS disease_genes (
+            disease_gene_id TEXT PRIMARY KEY,
+            gene_name VARCHAR(255),
+            description TEXT,
+            biotype VARCHAR(255),
+            object_type VARCHAR(255),
+            source TEXT,
+            start_position INT,
+            end_position INT,
+            uniprot_id VARCHAR(20)
 );
 
 --
 -- 4) GENE_ALIASES
 --
-CREATE TABLE gene_aliases (
-    id               SERIAL PRIMARY KEY,
-    disease_gene_id  INT REFERENCES disease_genes(disease_gene_id),
-    alias            VARCHAR(255)
+CREATE TABLE IF NOT EXISTS gene_aliases (
+            id SERIAL PRIMARY KEY,
+            disease_gene_id TEXT REFERENCES disease_genes(disease_gene_id) ON DELETE CASCADE,
+            alias VARCHAR(255) NOT NULL,
+            CONSTRAINT unique_alias_per_gene UNIQUE (disease_gene_id, alias)
 );
 
 --
@@ -137,7 +138,7 @@ CREATE TABLE ppi_network (
 --
 -- 11) THERAPEUTIC_TARGET
 --
-CREATE TABLE therapeutic_target (
+CREATE TABLE therapeutic_targets (
     target_id       SERIAL PRIMARY KEY,
     experiment_id   INT REFERENCES experiment(experiment_id),
     disease_gene_id INT REFERENCES disease_genes(disease_gene_id),

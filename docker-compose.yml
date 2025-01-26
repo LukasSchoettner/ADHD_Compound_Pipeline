@@ -18,11 +18,13 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./data/database_scheme/dump-adhd_research.sql:/docker-entrypoint-initdb.d/00_schema.sql
+    networks:
+      - adhd_network
 
   adhd_pipeline:
     build:
       context: .
-      dockerfile: Dockerfile  # or wherever your Dockerfile is
+      dockerfile: Dockerfile
     image: adhd_pipeline:latest
     container_name: adhd_pipeline
 
@@ -38,6 +40,7 @@ services:
     # Mount entire project folder so scripts/data are accessible
     volumes:
       - ./results:/app/results
+      - ./scripts:/app/scripts
     working_dir: /app
 
     # Expose Streamlit or other ports
@@ -51,6 +54,12 @@ services:
       - db
     # Run GUI upon startup
     command: [ "/bin/bash", "-c", "streamlit run scripts/gui_app.py --server.port=8501 --server.address=0.0.0.0" ]
+    networks:
+      - adhd_network
 
 volumes:
   db_data:
+
+networks:
+  adhd_network:
+    driver: bridge

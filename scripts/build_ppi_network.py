@@ -265,7 +265,7 @@ if __name__ == "__main__":
         title="ADHD Therapeutic Target PPI",
         output_path=os.path.join(results_dir, "PPI_network.png")
     )
-    print(f"Saving PPI network plot to {os.path.join(results_dir, "PPI_network.png")}")
+    #print(f"Saving PPI network plot to {os.path.join(results_dir, "PPI_network.png")}")
 
 
     # Load into Cytoscape

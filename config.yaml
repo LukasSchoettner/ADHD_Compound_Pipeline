@@ -1,6 +1,6 @@
 # Database connection strings
 database:
-  connection_string: "postgresql://postgres:admin@db/adhd_research"
+  connection_string: "postgresql+psycopg2://postgres:admin@db:5432/adhd_research"
 
 # Pipeline parameters
 pipeline:

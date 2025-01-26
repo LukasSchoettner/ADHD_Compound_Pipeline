@@ -1,8 +1,7 @@
 import os
 import psycopg2
 import requests
-import json
-import time
+from sqlalchemy import create_engine, text
 
 ###############################################################################
 # Configuration
@@ -14,7 +13,7 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 GENE_FILE = os.path.join(DATA_DIR, "adhd_disease_genes.txt")
 UNRESOLVED_FILE = os.path.join(DATA_DIR, "unresolved_genes.txt")
 
-DB_CONNECTION_STRING = "postgresql://postgres:admin@localhost/adhd_research"
+DB_CONNECTION_STRING = "postgresql+psycopg2://postgres:admin@db:5432/adhd_research"
 
 ENSEMBL_API = "https://rest.ensembl.org"
 HGNC_API = "https://rest.genenames.org/fetch/symbol/"
@@ -225,58 +224,57 @@ def save_to_database(connection_string, gene_data):
     Connect to PostgreSQL and upsert the given gene_data into
     disease_genes and gene_aliases tables.
     """
-    conn = psycopg2.connect(connection_string)
-    cursor = conn.cursor()
+    engine = create_engine(connection_string)
+    with engine.connect() as connection:
 
-    # Create tables if needed
-    create_tables(cursor)
+        # Insert or update each gene
+        for gene in gene_data:
+            connection.execute(text("""
+                INSERT INTO disease_genes (
+                    disease_gene_id,
+                    gene_name,
+                    description,
+                    biotype,
+                    object_type,
+                    source,
+                    start_position,
+                    end_position,
+                    uniprot_id
+                ) VALUES (:id, :display_name, :description, :biotype, :object_type, :source, :start, :end, :uniprot_id)
+                ON CONFLICT (disease_gene_id)
+                DO UPDATE SET
+                    gene_name       = EXCLUDED.gene_name,
+                    description     = EXCLUDED.description,
+                    biotype         = EXCLUDED.biotype,
+                    object_type     = EXCLUDED.object_type,
+                    source          = EXCLUDED.source,
+                    start_position  = EXCLUDED.start_position,
+                    end_position    = EXCLUDED.end_position,
+                    uniprot_id      = EXCLUDED.uniprot_id
+            """), {
+                "id": gene["id"],
+                "display_name": gene["display_name"],
+                "description": gene.get("description", ""),
+                "biotype": gene.get("biotype", ""),
+                "object_type": gene.get("object_type", ""),
+                "source": "Ensembl API",
+                "start": gene.get("start", None),
+                "end": gene.get("end", None),
+                "uniprot_id": gene.get("uniprot_id", None),
+            })
 
-    # Insert or update each gene
-    for gene in gene_data:
-        cursor.execute("""
-            INSERT INTO disease_genes (
-                disease_gene_id,
-                gene_name,
-                description,
-                biotype,
-                object_type,
-                source,
-                start_position,
-                end_position,
-                uniprot_id
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (disease_gene_id)
-            DO UPDATE SET
-                gene_name       = EXCLUDED.gene_name,
-                description     = EXCLUDED.description,
-                biotype         = EXCLUDED.biotype,
-                object_type     = EXCLUDED.object_type,
-                source          = EXCLUDED.source,
-                start_position  = EXCLUDED.start_position,
-                end_position    = EXCLUDED.end_position,
-                uniprot_id      = EXCLUDED.uniprot_id
-        """, (
-            gene["id"],
-            gene["display_name"],
-            gene.get("description", ""),
-            gene.get("biotype", ""),
-            gene.get("object_type", ""),
-            "Ensembl API",
-            gene.get("start", None),
-            gene.get("end", None),
-            gene.get("uniprot_id", None),
-        ))
+            # Insert aliases (with conflict check)
+            for alias in gene.get("aliases", []):
+                connection.execute(text("""
+                    INSERT INTO gene_aliases (disease_gene_id, alias)
+                    VALUES (:id, :alias)
+                    ON CONFLICT DO NOTHING
+                """), {
+                    "id": gene["id"],
+                    "alias": alias
+                })
 
-        # Insert aliases (with conflict check)
-        for alias in gene.get("aliases", []):
-            cursor.execute("""
-                INSERT INTO gene_aliases (disease_gene_id, alias)
-                VALUES (%s, %s)
-                ON CONFLICT DO NOTHING
-            """, (gene["id"], alias))
 
-    conn.commit()
-    conn.close()
 
 ###############################################################################
 # Main

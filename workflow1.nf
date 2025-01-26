@@ -58,7 +58,7 @@ process create_experiment {
     echo "Step: Starting psql command" > create_experiment_debug.log
 
     # Run the command
-    psql ${params.db_connection_string} -t -A -c \\
+    PGPASSWORD=admin psql -h db -p 5432 -U postgres -d adhd_research -t -A -c \\
     "INSERT INTO experiment (geo_id, compound, raw_p, adj_p, log_fc_up, log_fc_down, description, status) VALUES ('$geo_id', '$compound_name', '$raw_p', '$adj_p', '$log_fc_up', '$log_fc_down', '$description', 'Running') RETURNING experiment_id;" | grep -Eo '^[0-9]+' > experiment_id.txt
     """
 
