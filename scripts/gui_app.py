@@ -11,26 +11,37 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 
 
-def fetch_therapeutic_targets(db_connection_string, experiment_id):
+def fetch_therapeutic_targets(DB_CONNECTION_STRING, experiment_id):
     """
-    Query the database to fetch therapeutic targets for a given experiment.
+    Fetch therapeutic targets for the given experiment ID.
+
+    Args:
+        DB_CONNECTION_STRING (str): Database connection string.
+        experiment_id (int): ID of the current experiment.
+
+    Returns:
+        list of dict: Each dictionary contains 'disease_gene_id' and 'current_symbol'.
     """
     try:
-        engine = create_engine(db_connection_string)
+        engine = create_engine(DB_CONNECTION_STRING)
         query = text("""
-        SELECT tt.disease_gene_id, dg.gene_name AS current_symbol
-        FROM therapeutic_targets tt
-        INNER JOIN disease_genes dg ON tt.disease_gene_id = dg.disease_gene_id
-        WHERE tt.experiment_id = :experiment_id;
+            SELECT tt.disease_gene_id, dg.gene_name AS current_symbol
+            FROM therapeutic_targets tt
+            INNER JOIN disease_genes dg ON tt.disease_gene_id = dg.disease_gene_id
+            WHERE tt.experiment_id = :experiment_id;
         """)
         with engine.connect() as connection:
-            therapeutic_targets = pd.read_sql_query(query, connection, params={"experiment_id": experiment_id})
+            therapeutic_targets_df = pd.read_sql_query(query, connection, params={"experiment_id": experiment_id})
+        engine.dispose()
 
-        # Convert DataFrame to dictionary for compatibility with display_docking_input
-        return therapeutic_targets.to_dict(orient='records')  # List of dicts
+        # Convert the DataFrame to a list of dictionaries
+        therapeutic_targets = therapeutic_targets_df.to_dict(orient='records')
+        return therapeutic_targets
+
     except Exception as e:
         print(f"Error fetching therapeutic targets for experiment {experiment_id}: {e}")
         return []
+
 
 def fetch_docking_results(db_connection_string, experiment_id, energy_cutoff):
     """
@@ -153,66 +164,31 @@ def run_nextflow_workflow(workflow_file, params):
         return False
 
 
-#def display_docking_input(therapeutic_targets, docking_parameter_path):
-#    """
-#    Display input fields for docking site parameters for each therapeutic target.
-#    Saves them to a CSV if the user clicks "Save Docking Parameters."
-#    """
-#    therapeutic_targets["auto_detect"] = True  # default True
-#    therapeutic_targets["center"] = ""
-#    therapeutic_targets["size"] = ""
-#
-#    for idx, row in therapeutic_targets.iterrows():
-#        st.write(f"Gene: {row['gene_name']}, Disease Gene ID: {row['disease_gene_id']}")
-#
-#        # Let user pick auto or manual
-#        use_auto = st.checkbox(f"Auto-detect docking site for {row['disease_gene_id']}",
-#                               value=True, key=f"auto_{idx}")
-#        therapeutic_targets.at[idx, "auto_detect"] = use_auto
-#
-#        if not use_auto:
-#            center = st.text_input(
-#                f"Center (x, y, z) for {row['disease_gene_id']}",
-#                value="10, 10, 10",
-#                key=f"center_{idx}"
-#            )
-#            size = st.text_input(
-#                f"Size (x, y, z) for {row['disease_gene_id']}",
-#                value="20, 20, 20",
-#                key=f"size_{idx}"
-#            )
-#            therapeutic_targets.at[idx, "center"] = center
-#            therapeutic_targets.at[idx, "size"] = size
-#
-#    if st.button("Save Docking Parameters"):
-#        # Only write needed columns
-#        therapeutic_targets[[
-#            "disease_gene_id",
-#            "gene_name",
-#            "auto_detect",
-#            "center",
-#            "size"
-#        ]].to_csv(docking_parameter_path, index=False)
-#        st.success("Docking parameters saved. Ready for molecular docking.")
-
 def display_docking_input(therapeutic_targets, docking_parameter_path):
     """
     Display input fields for docking site parameters for each therapeutic target.
     Saves them to a CSV if the user clicks "Save Docking Parameters."
     """
-    # Default values for new fields
+    if not therapeutic_targets:
+        st.error("No therapeutic targets found. Please check your experiment ID and database.")
+        return
+
+    # Add default values
     for target in therapeutic_targets:
         target["auto_detect"] = True
         target["center"] = ""
         target["size"] = ""
 
+    # Debugging: Display therapeutic_targets
+    st.write("Therapeutic Targets:", therapeutic_targets)
+
     # Iterate over each therapeutic target
     for idx, target in enumerate(therapeutic_targets):
-        st.write(f"Gene: {target['current_symbol']}, Disease Gene ID: {target['disease_gene_id']}")
+        st.write(f"Gene: {target.get('current_symbol', 'N/A')}, Disease Gene ID: {target.get('disease_gene_id', 'N/A')}")
 
         # Let user pick auto or manual
         use_auto = st.checkbox(
-            f"Auto-detect docking site for {target['disease_gene_id']}",
+            f"Auto-detect docking site for {target.get('disease_gene_id', 'N/A')}",
             value=True,
             key=f"auto_{idx}"
         )
@@ -220,12 +196,12 @@ def display_docking_input(therapeutic_targets, docking_parameter_path):
 
         if not use_auto:
             center = st.text_input(
-                f"Center (x, y, z) for {target['disease_gene_id']}",
+                f"Center (x, y, z) for {target.get('disease_gene_id', 'N/A')}",
                 value="10, 10, 10",
                 key=f"center_{idx}"
             )
             size = st.text_input(
-                f"Size (x, y, z) for {target['disease_gene_id']}",
+                f"Size (x, y, z) for {target.get('disease_gene_id', 'N/A')}",
                 value="20, 20, 20",
                 key=f"size_{idx}"
             )
@@ -234,9 +210,19 @@ def display_docking_input(therapeutic_targets, docking_parameter_path):
 
     # Save parameters to CSV
     if st.button("Save Docking Parameters"):
-        # Convert list of dictionaries back to a pandas DataFrame for saving
         df = pd.DataFrame(therapeutic_targets)
-        df[["disease_gene_id", "current_symbol", "auto_detect", "center", "size"]].to_csv(docking_parameter_path, index=False)
+
+        st.write("DataFrame Columns:", df.columns.tolist())
+        st.write("DataFrame Head:", df.head())
+
+        required_columns = ["disease_gene_id", "current_symbol", "auto_detect", "center", "size"]
+        missing_columns = [col for col in required_columns if col not in df.columns]
+
+        if missing_columns:
+            st.error(f"The following required columns are missing: {missing_columns}")
+            return
+
+        df[required_columns].to_csv(docking_parameter_path, index=False)
         st.success("Docking parameters saved. Ready for molecular docking.")
 
 

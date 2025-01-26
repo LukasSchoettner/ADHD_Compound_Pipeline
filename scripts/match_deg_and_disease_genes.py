@@ -35,7 +35,7 @@ def fetch_and_save_therapeutic_targets(db_connection_string, experiment_id):
         with psycopg2.connect(db_connection_string) as conn:
             with conn.cursor() as cursor:
                 # 1. Create or ensure the therapeutic_targets table exists
-                create_therapeutic_targets_table(cursor)
+                #create_therapeutic_targets_table(cursor)
 
                 # 2. Fetch matches between DEGs and disease_genes (or via gene_aliases).
                 #    Include deg_id and uniprot_id in the SELECT.

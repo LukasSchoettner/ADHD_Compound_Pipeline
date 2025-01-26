@@ -16,7 +16,7 @@ services:
     # Use a named volume for persistent storage
     # AND mount your schema dump into the initdb directory
     volumes:
-      - db_data:/var/lib/postgresql/data
+      #- db_data:/var/lib/postgresql/data
       - ./data/database_scheme/dump-adhd_research.sql:/docker-entrypoint-initdb.d/00_schema.sql
     networks:
       - adhd_network
@@ -38,9 +38,9 @@ services:
               capabilities: [gpu]
 
     # Mount entire project folder so scripts/data are accessible
-    volumes:
-      - ./results:/app/results
-      - ./scripts:/app/scripts
+    #volumes:
+      #- ./results:/app/results
+      #- ./scripts:/app/scripts
     working_dir: /app
 
     # Expose Streamlit or other ports
@@ -53,7 +53,7 @@ services:
     depends_on:
       - db
     # Run GUI upon startup
-    command: [ "/bin/bash", "-c", "streamlit run scripts/gui_app.py --server.port=8501 --server.address=0.0.0.0" ]
+    command: [ "/bin/bash", "-c", "python scripts/collect_adhd_disease_genes.py && streamlit run scripts/gui_app.py --server.port=8501 --server.address=0.0.0.0" ]
     networks:
       - adhd_network
 
