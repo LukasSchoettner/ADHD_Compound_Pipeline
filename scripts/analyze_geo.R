@@ -1,7 +1,7 @@
 #!/usr/bin/env Rscript
 
 source("/app/renv/activate.R")
-.libPaths(c("/app/renv/library/", .libPaths()))
+.libPaths(c("/opt/conda/envs/myenv/lib/R/library", .libPaths()))
 ###############################################################################
 # Load required libraries
 ###############################################################################

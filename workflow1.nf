@@ -10,6 +10,8 @@ workflow {
                                                   params.log_fc_up,
                                                   params.log_fc_down)
 
+    experiment_id_channel = Channel.fromPath("${params.nx_data_dir}/experiment_id.txt")
+
     // Run analyze_geo and wait for its completion
     def geo_analysis_done = analyze_geo(params.geo_id,
                                         params.samples,
@@ -93,16 +95,21 @@ process analyze_geo {
 
 
 process match_deg_and_disease_genes {
+    publishDir 'data'
 
     input:
     val experiment_id
     val geo_analysis_done
+
+    output:
+    path "deg_match_done.txt"
 
     script:
     """
     python3 ${params.scripts_dir}/match_deg_and_disease_genes.py \\
         --experiment_id $experiment_id \\
         --db_connection_string "${params.db_connection_string}"
+    echo "PPI network completed." > deg_match_done.txt
     """
 
 }
@@ -112,7 +119,7 @@ process build_ppi_network {
 
     input:
     val experiment_id
-    path geo_analysis_done
+    path deg_match_done
 
     output:
     path "ppi_done.txt"

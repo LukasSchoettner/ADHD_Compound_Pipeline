@@ -75,7 +75,7 @@ WORKDIR /app
 COPY . /app
 
 # 6) Restore R environment (if applicable)
-RUN R -e "renv::restore(confirm = FALSE, library = '/app/renv/library')"
+RUN R -e "renv::restore(confirm = FALSE); .libPaths('/opt/conda/envs/myenv/lib/R/library')"
 
 # 7) Add GROMACS (Optional)
 ARG GROMACS_VERSION="v2024.4"
