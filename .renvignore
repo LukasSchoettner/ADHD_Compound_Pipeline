@@ -1,0 +1,16 @@
+# Ignore Conda libraries
+# ^~/miniconda3/envs/ADHD_Compound_Pipeline/lib/R/library/.*
+
+# Ignore temporary and build directories
+^/tmp/
+^/var/
+*.tmp
+*.log
+
+# Ignore data directories
+^data/
+^output/
+
+# Ignore version control directories
+^.git/
+^.svn/

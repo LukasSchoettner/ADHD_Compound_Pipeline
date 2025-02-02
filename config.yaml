@@ -1,0 +1,34 @@
+# Database connection strings
+database:
+  connection_string: "postgresql://postgres:admin@db:5432/adhd_research"
+
+# Pipeline parameters
+pipeline:
+  default_geo_id: "GSE85871"
+  default_samples: "GSM2286316,GSM2286317,GSM2286238,GSM2286239"
+  default_compound: "Gastrodin"
+  default_cid: "115067"
+  default_description: "Gastrodin experiment for ADHD pipeline testing"
+
+  #deg analysis defaults
+  raw_p: 0.05
+  adj_p: 0.05
+  log_fc_up: 1
+  log_fc_down: -1
+
+  #molecular docking defaults
+  default_docking_center: "0, 0, 0"
+  default_docking_size: "20, 20, 20"
+
+  #molecular dynamics defauls
+  simulation_time_ns_default: 100
+  temperature_kelvin_default: 300.0
+  pressure_bar_default: 1.0
+  solven_type_default: "water"
+
+
+# File paths (if needed)
+paths:
+  logs: "/app/logs"
+  results: "/app/results"
+  data: "/app/data"
