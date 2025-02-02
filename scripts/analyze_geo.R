@@ -16,11 +16,11 @@ library(DBI)
 library(RPostgres)
 library(tibble)
 
-###############################################################################
+
 # 1) Create an annotation data frame for your probes
-###############################################################################
+
 get_annotation_df <- function(probe_ids, platform_id) {
-  # This function returns a data.frame with:
+  # returns a data.frame with:
   #   probe_id    gene_symbol
   # for each probe in `probe_ids`.
 
@@ -97,9 +97,9 @@ get_annotation_df <- function(probe_ids, platform_id) {
   return(anno_df)
 }
 
-###############################################################################
+
 # 2) Run the limma pipeline (Contrast = Compound - Control)
-###############################################################################
+
 run_limma <- function(expr_data, pheno_data) {
   design <- model.matrix(~ 0 + factor(pheno_data$group))
   group_levels <- levels(factor(pheno_data$group))
@@ -251,9 +251,9 @@ deg_results <- left_join(deg_results, anno_df, by="probe_id")
 # If gene_symbol is NA, fallback to the probe_id
 deg_results$gene_symbol[ is.na(deg_results$gene_symbol) ] <- deg_results$probe_id[ is.na(deg_results$gene_symbol) ]
 
-###############################################################################
+
 # 10) For each gene_symbol, keep the single "best" probe by raw p‐value
-###############################################################################
+
 deg_results <- deg_results %>%
   group_by(gene_symbol) %>%
   slice_min(order_by = P.Value, n=1) %>%
@@ -261,9 +261,9 @@ deg_results <- deg_results %>%
 
 # Now we have exactly one row per gene
 
-###############################################################################
-# 11) Mark significance using your fallback logic:
-###############################################################################
+
+# 11) Mark significance using fallback logic:
+
 deg_results$significant <- "Not changed"
 
 # First see how many pass the adjusted threshold
