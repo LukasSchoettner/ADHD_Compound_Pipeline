@@ -10,8 +10,9 @@ This project analyzes natural compounds and their relationships to ADHD-related 
 - A **GUI** built with **Streamlit** for user-friendly interactions
 - A **PostgreSQL** database for persisting results
 - Various scripts in **Python** and **R** (including **Bioconductor** packages)
+- **Note**: Altough its presented as an ADHD specific pipeline its easy to switch the target by simply changing the content of the "adhd_disease_genes.txt" file, which will probably be renamed in future iterations.
 
-The pipeline can be run via docker compose or a lot of painful environment magic
+The pipeline can be run via docker compose or a lot of painful environment magic.
 
 ---
 
